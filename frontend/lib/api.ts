@@ -1,6 +1,6 @@
 // One small typed client for every backend call. Base URL comes from NEXT_PUBLIC_API_URL.
 import type {
-  BundleItem, BusinessProfile, EligibleProduct, GstinLookup, Lang, Order, Quote, StarterResponse,
+  BundleItem, BusinessProfile, ChatLang, ChatResponse, EligibleProduct, GstinLookup, Lang, Order, Quote, StarterResponse,
 } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -44,4 +44,15 @@ export const api = {
   createOrder: (b: { profile: BusinessProfile; items: BundleItem[]; language: Lang; mobile: string }) =>
     request<Order>("/api/orders", post(b)),
   getOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}`),
+
+  // ---- AI Advisor ----
+  advisorStart: (language: ChatLang) => request<ChatResponse>("/api/advisor/start", post({ language })),
+  advisorChat: (sessionId: string | undefined, message: string, language: ChatLang) =>
+    request<ChatResponse>("/api/advisor/chat", post({ sessionId, message, language })),
+  advisorEvent: (sessionId: string, event: "quote_opened" | "ordered") =>
+    request<{ ok: boolean }>(`/api/advisor/session/${encodeURIComponent(sessionId)}/event`, post({ event })),
+  advisorHandoff: (sessionId: string) =>
+    request<{ callbackId: string; needsMobile: boolean }>("/api/advisor/handoff", post({ sessionId })),
+  advisorCallback: (sessionId: string, mobile: string) =>
+    request<{ callbackId: string; mobile_masked: string; message: string }>("/api/advisor/callback", post({ sessionId, mobile })),
 };

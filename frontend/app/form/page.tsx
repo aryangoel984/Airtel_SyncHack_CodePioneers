@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import { useLang } from "@/lib/LangContext";
 import { saveProfile } from "@/lib/profile";
+import { clearInitialItems } from "@/lib/advisorStore";
 
 const SEGMENTS = ["micro", "prof", "multi", "mfg"] as const;
 
-export default function StartPage() {
+export default function FormPage() {
   const { t } = useLang();
   const router = useRouter();
   const [segment, setSegment] = useState<string>("micro");
@@ -27,6 +28,7 @@ export default function StartPage() {
     e.preventDefault();
     setTried(true);
     if (!staffOk || !sitesOk) return;
+    clearInitialItems(); // a fresh form means a fresh starter plan, not the advisor's items
     saveProfile({ segment, city_tier: tier, employee_count: staffN, num_sites: sitesN, has_valid_active_gstin: gst });
     router.push("/quote");
   }

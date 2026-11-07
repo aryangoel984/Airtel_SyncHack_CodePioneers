@@ -12,6 +12,7 @@ import { useLang } from "@/lib/LangContext";
 import { api } from "@/lib/api";
 import { formatDate, nameOf, rupees } from "@/lib/i18n";
 import { loadProfile } from "@/lib/profile";
+import { loadAdvisorSessionId, loadInitialItems } from "@/lib/advisorStore";
 import type { BusinessProfile, Quote, StarterItem, StarterResponse } from "@/lib/types";
 
 interface Sel { on: boolean; qty: number }
@@ -24,6 +25,8 @@ export default function QuotePage() {
   const [starter, setStarter] = useState<StarterResponse | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [sel, setSel] = useState<Record<string, Sel>>({});
+  // Which products make up "Your plan": the advisor's exact items, or the starter bundle when there are none
+  const [planIds, setPlanIds] = useState<Set<string>>(new Set());
   const [showMore, setShowMore] = useState(false);
 
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -41,9 +44,16 @@ export default function QuotePage() {
     try {
       const s = await api.starter(p);
       setStarter(s);
+      const fromAdvisor = loadInitialItems(); // set when the customer came from the AI Advisor
       const initial: Record<string, Sel> = {};
-      for (const i of s.base) initial[i.product_id] = { on: true, qty: i.quantity };
-      for (const i of [...s.addons, ...s.more]) initial[i.product_id] = { on: false, qty: i.quantity };
+      for (const i of [...s.base, ...s.addons, ...s.more]) initial[i.product_id] = { on: false, qty: i.quantity };
+      if (fromAdvisor?.length) {
+        for (const i of fromAdvisor) if (initial[i.product_id]) initial[i.product_id] = { on: true, qty: i.quantity };
+        setPlanIds(new Set(fromAdvisor.map((i) => i.product_id)));
+      } else {
+        for (const i of s.base) initial[i.product_id] = { on: true, qty: i.quantity };
+        setPlanIds(new Set(s.base.map((i) => i.product_id)));
+      }
       setSel(initial);
     } catch (e) {
       setLoadError(e);
@@ -94,6 +104,8 @@ export default function QuotePage() {
     setPlacing(true); setPlaceError(null);
     try {
       const order = await api.createOrder({ profile, items, language: lang, mobile });
+      const advisorId = loadAdvisorSessionId();
+      if (advisorId) api.advisorEvent(advisorId, "ordered").catch(() => {}); // best effort, for the back-office view
       router.push(`/order/${order.id}`);
     } catch (e) {
       setPlaceError(e); setPlacing(false);
@@ -135,6 +147,12 @@ export default function QuotePage() {
     t("summary_gst", { v: profile.has_valid_active_gstin ? t("yes") : t("no") }),
   ].join(" · ");
 
+  // Sections: the plan, add-ons, more options. With no advisor items this is exactly starter.base / addons / more.
+  const allItems = [...starter.base, ...starter.addons, ...starter.more];
+  const planItems = allItems.filter((i) => planIds.has(i.product_id));
+  const addonItems = starter.addons.filter((i) => !planIds.has(i.product_id));
+  const moreItems = [...starter.base, ...starter.more].filter((i) => !planIds.has(i.product_id));
+
   const row = (i: StarterItem, mode: "plan" | "toggle") => (
     <ProductRow
       key={i.product_id}
@@ -155,7 +173,7 @@ export default function QuotePage() {
         {/* Business summary */}
         <div className="flex items-start justify-between gap-3 text-sm text-gray-700">
           <p>{summary}</p>
-          <Link href="/" className="min-h-11 shrink-0 px-2 font-semibold text-brand underline">{t("edit")}</Link>
+          <Link href="/form" className="min-h-11 shrink-0 px-2 font-semibold text-brand underline">{t("edit")}</Link>
         </div>
 
         {/* Your plan */}
@@ -164,7 +182,7 @@ export default function QuotePage() {
           {starter.based_on.count > 0 && (
             <p className="mb-2 mt-1 text-xs text-gray-500">{lang === "hi" ? starter.based_on.line_hi : starter.based_on.line_en}</p>
           )}
-          {starter.base.length === 0 && <p className="py-3 text-sm text-gray-600">{t("empty_base")}</p>}
+          {planItems.length === 0 && <p className="py-3 text-sm text-gray-600">{t("empty_base")}</p>}
           {autoAdded.map(({ fix, line }) => (
             <ProductRow
               key={"auto-" + fix.added_product_id}
@@ -173,30 +191,30 @@ export default function QuotePage() {
               note={t("added_note", { added: nameOf(fix.added_copy, lang), for: nameOf(fix.for_copy, lang) })}
             />
           ))}
-          {starter.base.map((i) => row(i, "plan"))}
+          {planItems.map((i) => row(i, "plan"))}
         </section>
 
         {/* Add-ons */}
-        {starter.addons.length > 0 && (
+        {addonItems.length > 0 && (
           <section className={card} aria-labelledby="addons-h">
             <h2 id="addons-h" className="text-lg font-bold">{t("addons")}</h2>
             <p className="mb-1 text-xs text-gray-500">{t("addons_sub")}</p>
-            {starter.addons.map((i) => row(i, "toggle"))}
+            {addonItems.map((i) => row(i, "toggle"))}
           </section>
         )}
 
         {/* More options (collapsible) */}
-        {starter.more.length > 0 && (
+        {moreItems.length > 0 && (
           <section className={card} aria-labelledby="more-h">
             <h2 id="more-h" className="sr-only">{t("more")}</h2>
             <button
               onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}
               className="flex min-h-12 w-full items-center justify-between text-left text-lg font-bold"
             >
-              {showMore ? t("more_hide") : t("more_show", { n: starter.more.length })}
+              {showMore ? t("more_hide") : t("more_show", { n: moreItems.length })}
               <span aria-hidden className={`transition-transform ${showMore ? "rotate-180" : ""}`}>⌄</span>
             </button>
-            {showMore && <div className="mt-1">{starter.more.map((i) => row(i, "toggle"))}</div>}
+            {showMore && <div className="mt-1">{moreItems.map((i) => row(i, "toggle"))}</div>}
           </section>
         )}
 
