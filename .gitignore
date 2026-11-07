@@ -23,3 +23,7 @@ backend/data/orders.json.tmp
 *.pem
 npm-debug.log*
 coverage/
+backend/data/advisor_sessions.json
+backend/data/advisor_sessions.json.tmp
+backend/data/callbacks.json
+backend/data/callbacks.json.tmp

@@ -49,7 +49,9 @@ export interface Lead {
   lead_id: string;
   created_date: string;
   business_name: string;
+  business_type: string;
   segment: string;
+  city: string;
   city_tier: number;
   state: string;
   preferred_language: string;
@@ -139,7 +141,9 @@ export function loadLeads(): Lead[] {
     lead_id: r.lead_id,
     created_date: r.created_date,
     business_name: r.business_name,
+    business_type: r.business_type,
     segment: r.segment,
+    city: r.city,
     city_tier: num(r.city_tier),
     state: r.state,
     preferred_language: r.preferred_language,

@@ -1,4 +1,5 @@
 // Express API server (port 4000). Exports `app` so tests can call it with supertest.
+import "dotenv/config"; // loads backend/.env (GROQ key etc.): never logged, never sent to the browser
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { gstinRouter } from "./routes/gstin";
@@ -9,6 +10,8 @@ import { quoteRouter } from "./routes/quote";
 import { bundlesRouter } from "./routes/bundles";
 import { ordersRouter } from "./routes/orders";
 import { warmStarterCache } from "./lib/starter";
+import { advisorRouter } from "./routes/advisor";
+import { initModels } from "./lib/advisor/llm";
 
 // Load CSVs and compute the starter-bundle statistics once, at startup.
 warmStarterCache();
@@ -17,7 +20,7 @@ export const app = express();
 
 // Only our own frontend may call this API from a browser.
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
-app.use(express.json());
+app.use(express.json({ limit: "20kb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/gstin", gstinRouter);
@@ -27,6 +30,7 @@ app.use("/api/eligible", eligibleRouter);
 app.use("/api/quote", quoteRouter);
 app.use("/api/bundles", bundlesRouter);
 app.use("/api/orders", ordersRouter);
+app.use("/api/advisor", advisorRouter);
 
 // Simple error handler: bad JSON -> 400, anything else -> 500 (no stack traces to the client).
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -39,4 +43,5 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
 if (process.env.VITEST === undefined) {
   const port = Number(process.env.PORT ?? 4000);
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
+  initModels(); // confirm the Groq models exist (logs model names only)
 }
