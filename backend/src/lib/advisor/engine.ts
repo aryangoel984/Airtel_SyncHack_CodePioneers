@@ -7,7 +7,7 @@ import { redactMessage } from "./redact";
 import { LlmMessage, LlmUnavailableError, completeWithFallback } from "./llm";
 import { TOOL_DEFS, applyFields, applyGstinLookup, publicProfile, requestHuman, runTool } from "./tools";
 import { extractWishes, lookupCity } from "./mapping";
-import { Recommendation, missingSlots, summarizeForLlm } from "./recommend";
+import { BlockedWish, Recommendation, buildRecommendation, missingSlots, summarizeForLlm } from "./recommend";
 import { buildSystemPrompt } from "./systemPrompt";
 import { checkReply, collectAmounts, needsNameChecks } from "./guardrail";
 import { guidedTurn } from "./guided";
@@ -77,7 +77,23 @@ export async function handleChat(input: { sessionId?: string; message: string; l
     if (["checksum_failed", "bad_format"].includes(red.gstin.status)) notes.push("The GSTIN failed validation: ask the customer to re-check the number.");
     if (red.gstin.status === "Active") notes.push("The GSTIN is Active and its details were filled in automatically. Do not ask about GST, name or city again.");
   }
+  const wishesBefore = [...s.profile.wishes];
   safetyNetSave(s, red.safeText);
+  // A NEW wish once all details are known: rebuild the plan in code right away, so a blocked wish
+  // (e.g. WhatsApp Business without GST) is always explained, even if the model forgets to call the tool.
+  const newWishes = s.profile.wishes.filter((w) => !wishesBefore.includes(w));
+  let newlyBlocked: BlockedWish[] = [];
+  if (newWishes.length && missingSlots(s.profile).length === 0) {
+    s.recommendationCount += 1;
+    s.recommendation = buildRecommendation(s.profile, { wishes: s.profile.wishes, budget: s.profile.budget_per_month }, s.recommendationCount);
+    setOutcome(s, "recommended");
+    newlyBlocked = s.recommendation.blocked_wishes.filter((b) => b.wish && (newWishes as string[]).includes(b.wish));
+    if (newlyBlocked.length) {
+      notes.push(`The plan was already updated. The customer asked for something they CANNOT have: ${newlyBlocked
+        .map((b) => `${b.copy.name_en} (${b.reason_en}${b.alternative ? `; closest alternative: ${b.alternative.copy.name_en}` : ""})`)
+        .join("; ")}. You MUST clearly tell them it is not available and why, in their language, then mention the alternative if there is one.`);
+    }
+  }
   const askedHuman = HUMAN_REQUEST_PATTERNS.some((re) => re.test(message));
   const frustrated = FRUSTRATION_PATTERNS.some((re) => re.test(message));
   if (askedHuman) requestHuman(s, "user_asked");
@@ -110,6 +126,7 @@ export async function handleChat(input: { sessionId?: string; message: string; l
     if (s.handoff && (askedHuman || frustrated)) reply += " " + notice(NOTICES.handoff, s.profile.language);
     if (red.gstin && ["Cancelled", "Suspended", "not_found"].includes(red.gstin.status)) reply += " " + notice(NOTICES.gstInactive, s.profile.language);
   }
+  reply = ensureBlockedExplained(reply, newlyBlocked, s.profile.language);
 
   // remember the (already redacted) text for the LLM's context. It is deleted when the session expires.
   s.history.push({ role: "user", content: red.safeText }, { role: "assistant", content: reply });
@@ -118,7 +135,32 @@ export async function handleChat(input: { sessionId?: string; message: string; l
   return response(s, reply, modelUsed);
 }
 
-const NEGATION_WORDS = /(\bnot\b|n't|\bno\b|\bwithout\b|\bnahi\b|\bnahin\b|\bmat\b|नहीं|नही|बिना)/i;
+/**
+ * Last line of defence: if the customer asked for something they can't have and the reply doesn't say so,
+ * add one plain sentence with the reason (from the rules engine, not the AI).
+ */
+export function ensureBlockedExplained(reply: string, blocked: BlockedWish[], lang: AdvisorLang): string {
+  const hi = lang === "hi";
+  const lower = reply.toLowerCase();
+  const missing = blocked.filter((b) => {
+    const name = (hi ? b.copy.name_hi : b.copy.name_en).toLowerCase();
+    const gstReason = /gst/i.test(b.reason_en);
+    // mentioned by name, or (for GST reasons) the reply talks about GST
+    return !(lower.includes(name) || lower.includes(b.copy.name_en.toLowerCase()) || (gstReason && /gst|जीएसटी/i.test(reply)));
+  });
+  if (!missing.length) return reply;
+  const lines = missing.map((b) => {
+    const name = hi ? b.copy.name_hi : b.copy.name_en;
+    const reason = hi ? b.reason_hi : b.reason_en;
+    const alt = b.alternative ? (hi ? b.alternative.copy.name_hi : b.alternative.copy.name_en) : null;
+    return hi
+      ? `${name} आपके लिए उपलब्ध नहीं है: ${reason}${alt ? ` इसकी जगह ${alt} ले सकते हैं।` : ""}`
+      : `${name} isn't available for you: ${reason}${alt ? ` You can take ${alt} instead.` : ""}`;
+  });
+  return `${reply.trim()}\n\n${lines.join("\n")}`.trim();
+}
+
+const NEGATION_WORDS =/(\bnot\b|n't|\bno\b|\bwithout\b|\bnahi\b|\bnahin\b|\bmat\b|नहीं|नही|बिना)/i;
 
 /**
  * Safety net: details that are clear from the text alone are saved by code BEFORE the LLM runs,

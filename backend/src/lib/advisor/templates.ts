@@ -122,7 +122,11 @@ const CHIPS = {
 export function quickRepliesFor(s: Session): QuickReply[] {
   const l = s.profile.language;
   const set = (c: { en: Chips; hi: Chips }) => (isHindi(l) ? c.hi : c.en).map(([label, value]) => ({ label, value }));
-  if (s.recommendation) return set(CHIPS.after);
+  if (s.recommendation) {
+    // Don't offer "Add CCTV" when CCTV (P23) is already in the plan.
+    const hasCctv = s.recommendation.items.some((i) => i.product_id === "P23");
+    return set(CHIPS.after).filter((c, idx) => !(hasCctv && idx === 2));
+  }
   const step = nextStep(s);
   if (step === "done") return [];
   if (step === "tier") return set(CHIPS.city);
