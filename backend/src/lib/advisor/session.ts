@@ -53,7 +53,8 @@ const sessions = new Map<string, Session>();
 
 const summariesFile = () => process.env.ADVISOR_SESSIONS_FILE ?? path.join(process.cwd(), "data", "advisor_sessions.json");
 
-function readSummaries(): Record<string, unknown>[] {
+/** Masked chat summaries (also read by the back-office dashboard). */
+export function readSummaries(): Record<string, unknown>[] {
   try { return JSON.parse(fs.readFileSync(summariesFile(), "utf8")); } catch { return []; }
 }
 

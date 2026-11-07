@@ -18,6 +18,9 @@ export interface CallbackLead {
 
 const file = () => process.env.CALLBACKS_FILE ?? path.join(process.cwd(), "data", "callbacks.json");
 
+/** All callback leads (the back-office dashboard reads these). */
+export function readCallbacks(): CallbackLead[] { return readAll(); }
+
 function readAll(): CallbackLead[] {
   try { return JSON.parse(fs.readFileSync(file(), "utf8")); } catch { return []; }
 }

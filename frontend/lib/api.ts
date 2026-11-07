@@ -1,5 +1,6 @@
 // One small typed client for every backend call. Base URL comes from NEXT_PUBLIC_API_URL.
 import type {
+  BoSummary, ModelReport, QueueItem, Reengage,
   BundleItem, BusinessProfile, ChatLang, ChatResponse, DocType, EligibleProduct, GstinLookup, KycSample, KycState, Lang, Order, Quote, StarterResponse,
 } from "./types";
 
@@ -47,6 +48,20 @@ export const api = {
   getOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}`),
   advanceOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}/advance`, { method: "POST" }),
   trackOrder: (orderId: string, mobile: string) => request<{ id: string }>("/api/orders/track", post({ orderId, mobile })),
+
+  // ---- Back office (staff PIN sent in a header) ----
+  bo: (pin: string) => {
+    const h = { headers: { "x-backoffice-pin": pin } };
+    return {
+      summary: () => request<BoSummary>("/api/backoffice/summary", h),
+      queue: () => request<QueueItem[]>("/api/backoffice/queue", h),
+      update: (id: string, change: Partial<Pick<QueueItem, "owner" | "status" | "note">>) =>
+        request<QueueItem>(`/api/backoffice/queue/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(change), headers: { "x-backoffice-pin": pin } }),
+      reveal: (id: string) => request<{ mobile: string }>(`/api/backoffice/queue/${encodeURIComponent(id)}/reveal`, { method: "POST", headers: { "x-backoffice-pin": pin } }),
+      reengage: () => request<Reengage>("/api/backoffice/reengage", h),
+      model: () => request<ModelReport>("/api/backoffice/model", h),
+    };
+  },
 
   // ---- Smart KYC ----
   kycConsent: (id: string, language: Lang) => request<KycState>(`/api/kyc/${encodeURIComponent(id)}/consent`, post({ accepted: true, language })),

@@ -230,3 +230,48 @@ export interface ChatResponse {
   guardrail: { hits: number };
   tokensUsed: number;
 }
+
+// ---- Back office (Step 6): /api/backoffice/* (mirrors backend/src/lib/backoffice/*) ----
+export type BoOwner = "Field sales" | "Channel partner" | "Inside sales";
+export type BoStatus = "New" | "Contacted" | "Won" | "Lost";
+export interface LeadScore { probability: number; band: "High" | "Medium" | "Low"; reasons: { label: string; effect: "up" | "down" }[] }
+export interface QueueItem {
+  id: string;
+  kind: "callback" | "order";
+  createdAt: string;
+  reason: { code: string; label: string; detail?: string };
+  business: { name: string | null; segment: string | null; city_tier: number | null; employees: number | null; sites: number | null; has_gst: boolean | null; language: string | null };
+  wishes: string[];
+  value_inr: number | null;
+  valueEstimated: boolean;
+  score: LeadScore;
+  expected_value_inr: number;
+  owner: BoOwner;
+  ownerWhy: string;
+  status: BoStatus;
+  note: string;
+  updatedAt: string | null;
+  mobile_masked: string | null;
+  orderStatus?: string;
+  kycIssues?: string[];
+}
+export interface BoSummary {
+  funnel: { stages: { key: string; label: string; value: number }[]; handoffs: number; callbacks: number; stoppedAt: Record<string, number>; aiShare: number };
+  model: { auc: number; lift: number; baseRate: number; top20Rate: number };
+  owners: BoOwner[];
+  statuses: BoStatus[];
+}
+export interface ReengageLead {
+  lead_id: string; business_name: string; contact_name: string; segment: string | null; city: string; city_tier: number;
+  language: string; drop_reason: string; source: string; score: LeadScore; value_inr: number; expected_value_inr: number; channel: BoOwner;
+}
+export interface Reengage {
+  pool: number; byReason: Record<string, number>; expectedCustomersAll: number; expectedCustomersTop20: number;
+  expectedMonthlyTop20: number; leads: ReengageLead[]; model: { auc: number; lift: number };
+}
+export interface ModelReport {
+  trainedOn: number; testedOn: number; auc: number; baseRate: number; top20Rate: number; lift: number;
+  deciles: { decile: number; rate: number; avgScore: number }[];
+  thresholds: { high: number; medium: number };
+  factors: { name: string; label: string; weight: number }[];
+}

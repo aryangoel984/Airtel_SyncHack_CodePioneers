@@ -106,6 +106,10 @@ export default function Landing({ busy, error, onPick }: { busy: boolean; error:
           ))}
         </ol>
       </section>
+
+      <p className="mt-10 text-center text-xs text-muted">
+        <Link href="/backoffice" className="font-semibold hover:text-ink hover:underline">{t("land_staff")}</Link>
+      </p>
     </main>
   );
 }

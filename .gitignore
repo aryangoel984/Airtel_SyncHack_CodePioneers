@@ -27,3 +27,8 @@ backend/data/advisor_sessions.json
 backend/data/advisor_sessions.json.tmp
 backend/data/callbacks.json
 backend/data/callbacks.json.tmp
+backend/data/backoffice.json
+backend/data/backoffice.json.tmp
+
+# Claude Code project notes: kept locally, not in the repo
+CLAUDE.md

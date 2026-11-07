@@ -66,6 +66,15 @@ export interface Lead {
   bundle_products: string; // raw "P01x1;P07x2"
   monthly_bundle_value_inr: number | null;
   churned_within_6_months: boolean; // only meaningful for activated leads
+  // used by the lead score (Step 6)
+  lead_source: string;
+  current_internet: string;
+  current_provider: string;
+  contact_name: string;
+  contact_role: string;
+  monthly_telecom_spend_inr: number;
+  products_of_interest: string[];
+  drop_reason: string;
 }
 
 // ---------- Helpers ----------
@@ -160,6 +169,14 @@ export function loadLeads(): Lead[] {
       ? num(r.monthly_bundle_value_inr)
       : null,
     churned_within_6_months: r.churned_within_6_months === "Y",
+    lead_source: r.lead_source,
+    current_internet: r.current_internet,
+    current_provider: r.current_provider,
+    contact_name: r.contact_name,
+    contact_role: r.contact_role,
+    monthly_telecom_spend_inr: num(r.monthly_telecom_spend_inr),
+    products_of_interest: splitList(r.products_of_interest, ";"),
+    drop_reason: r.drop_reason ?? "",
   }));
   return _leads;
 }

@@ -112,6 +112,11 @@ export function getOrder(id: string): PublicOrder | undefined {
   return o ? toPublic(o) : undefined;
 }
 
+/** All orders with full mobile numbers: server-side only (back-office queue). */
+export function listOrdersPrivate(): Order[] {
+  return readAll();
+}
+
 /** Full order including the mobile number: server-side use only (e.g. tracker lookup). */
 export function getOrderPrivate(id: string): Order | undefined {
   return readAll().find((x) => x.id === id);

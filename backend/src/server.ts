@@ -12,10 +12,13 @@ import { ordersRouter } from "./routes/orders";
 import { warmStarterCache } from "./lib/starter";
 import { advisorRouter } from "./routes/advisor";
 import { kycRouter } from "./routes/kyc";
+import { backofficeRouter, DEFAULT_PIN } from "./routes/backoffice";
+import { trainModel } from "./lib/backoffice/model";
 import { initModels } from "./lib/advisor/llm";
 
 // Load CSVs and compute the starter-bundle statistics once, at startup.
 warmStarterCache();
+trainModel(); // lead score for the back office (about 1 second)
 
 export const app = express();
 
@@ -33,6 +36,7 @@ app.use("/api/bundles", bundlesRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/advisor", advisorRouter);
 app.use("/api/kyc", kycRouter);
+app.use("/api/backoffice", backofficeRouter);
 
 // Simple error handler: bad JSON -> 400, anything else -> 500 (no stack traces to the client).
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -46,4 +50,5 @@ if (process.env.VITEST === undefined) {
   const port = Number(process.env.PORT ?? 4000);
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
   initModels(); // confirm the Groq models exist (logs model names only)
+  if (!process.env.BACKOFFICE_PIN) console.warn(`[backoffice] using the demo staff PIN ${DEFAULT_PIN}. Set BACKOFFICE_PIN in backend/.env before going live.`);
 }
