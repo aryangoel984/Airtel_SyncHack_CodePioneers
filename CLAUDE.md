@@ -47,7 +47,8 @@
 ## Step 2 decisions
 - **Starter bundles** (`backend/src/lib/starter.ts`): from ACTIVATED, non-churned leads in the same segment. Base = products in >= 40% of bundles, add-ons = 10-40% (`STARTER_CONFIG`). Computed once at startup and cached. Everything runs through the rules engine with the customer's real profile.
 - Only ONE internet plan and ONE SIM plan go in the base bundle (the most common eligible one); the others appear in "more options". An add-on that would force an extra product (e.g. Static IP on a leased line) stays in "more options" instead of the add-on list.
-- Default quantities (Step 1 rules) make SIM-heavy bundles large (per line = staff, cap 50). Tune `defaultQuantity` if the typical price looks too high.
+- **Default quantities are learned from history** (`backend/src/lib/quantities.ts`, all settings in `quantityConfig.ts`): for each (segment, product) among ACTIVATED + NOT churned leads we take the median quantity per employee (lines, users, devices, cameras, channels) or per site (per-site and per-counter products), multiply by the customer's employees/sites, round, and clamp to 1..historic max. SIMs (P07/P08) are fixed at 2..6. Fewer than `minSamples` (3) purchases, or a unit not in `basisByUnit` (account, pack, number, IP, vehicle), falls back to the simple unit rule in `rules.ts`. Customers can still change quantities with +/-. Note: per-site products are clamped to the historic max, so e.g. a 3-site professional office defaults to 1 connection (history never had more).
+- Starter base price vs historic IQR of `monthly_bundle_value_inr` (`tests/iqr.test.ts`, typical profiles): prof (Rs 5,338) and multi-site (Rs 25,775) are inside; micro (Rs 1,597 vs 1,862-2,995) and factory (Rs 11,464 vs 13,330-21,250) are BELOW. Reported, not forced: the IQR is for whole bundles (base + add-ons), we compare the base only. The test records these verdicts so any change is noticed.
 - Blocked items carry structured `codes`; `productCopy.ts` turns them into customer text (EN/HI), e.g. "Needs a GST number".
 - Customers never see product codes (P01...). The UI only shows `copy` names from the backend.
 - Orders: `backend/data/orders.json` (git-ignored), ids `UD-2026-0001`, server recalculates prices, mobile stored in full but only ever returned masked (`98******21`). Order times use the simulated clock (TODAY's date + real time of day). Writes go through a queue.
@@ -59,10 +60,11 @@
 backend/                 Express + TypeScript API, port 4000
   data/                  4 CSVs (+ orders.json at runtime, git-ignored)
   src/server.ts          app, CORS (localhost:3000 only), error handler, /api/health
-  src/lib/               data, validators, mask, lookups, rules, quote,
+  src/lib/               data, validators, mask, lookups, rules, quote, segments,
+                         quantities + quantityConfig (history-based default quantities),
                          productCopy (EN/HI text), starter, orders, validate (input checks)
   src/routes/            gstin, udyam, catalogue, eligible, quote, bundles, orders
-  tests/                 validators, rules+quote, historic-leads, starter, orders
+  tests/                 validators, rules+quote, historic-leads, starter, orders, iqr
 frontend/                Next.js + Tailwind, port 3000 (no business logic)
   app/                   page.tsx (start form), quote/, order/[id]/, dev/ (API test page)
   components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView
@@ -82,6 +84,6 @@ docs/PROBLEM_STATEMENT.md
 ```
 npm run install:all
 npm run dev      # backend :4000 + frontend :3000
-npm test         # backend Vitest + supertest (30 tests; prints the historic-bundle count)
+npm test         # backend Vitest + supertest (36 tests; prints the historic-bundle count)
 ```
 Backend env: `backend/.env.example`. Frontend env: `frontend/.env.example` (`NEXT_PUBLIC_API_URL`).

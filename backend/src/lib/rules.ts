@@ -1,5 +1,6 @@
 // Rules engine: decides which products a business may buy, and fixes bundles.
 import { Product, loadProducts, getProduct } from "./data";
+import { historicQuantity } from "./quantities";
 
 export interface BusinessProfile {
   segment: string; // lead segment name or catalogue code (micro/prof/multi/mfg)
@@ -42,18 +43,8 @@ export interface RulesResult {
   violation_count: number;
 }
 
-// Map the lead file's segment names to the catalogue's short codes.
-// Segment is only a recommendation hint (not a blocking rule).
-const SEGMENT_CODES: Record<string, string> = {
-  "Micro retail & services": "micro",
-  "Professional offices": "prof",
-  "Small manufacturers": "mfg",
-  "Small multi-site businesses": "multi",
-};
-export const segmentCode = (s: string) => SEGMENT_CODES[s] ?? s;
-/** Reverse lookup: catalogue code -> lead segment name (accepts a name as well). */
-export const segmentName = (s: string) =>
-  Object.keys(SEGMENT_CODES).find((name) => name === s || SEGMENT_CODES[name] === s);
+import { segmentCode, segmentName } from "./segments";
+export { segmentCode, segmentName };
 
 /** Structured reasons this product can't be sold to this business (ignoring dependencies). */
 export function ownProblemCodes(p: Product, b: BusinessProfile): ReasonCode[] {
@@ -85,8 +76,16 @@ function ownProblems(p: Product, b: BusinessProfile): string[] {
 
 const isEligible = (p: Product, b: BusinessProfile) => ownProblems(p, b).length === 0;
 
-/** Sensible default quantity, based on the product's billing unit. */
+/**
+ * Default quantity: learned from similar customers' history when we have enough of it
+ * (see quantities.ts and quantityConfig.ts), otherwise the simple unit rule below.
+ */
 export function defaultQuantity(p: Product, b: BusinessProfile): number {
+  return historicQuantity(p, b) ?? unitRuleQuantity(p, b);
+}
+
+/** Fallback: a sensible quantity from the product's billing unit alone. */
+function unitRuleQuantity(p: Product, b: BusinessProfile): number {
   const emp = Math.max(1, b.employee_count);
   const sites = Math.max(1, b.num_sites);
   switch (p.unit) {

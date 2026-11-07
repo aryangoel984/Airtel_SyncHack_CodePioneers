@@ -3,6 +3,7 @@ import { Product, getProduct, loadGstinRegistry, loadLeads, loadProducts, parseB
 import { BusinessProfile, BundleItem, ReasonCode, checkBundle, defaultQuantity, segmentCode, segmentName } from "./rules";
 import { ProductCopy, copyFor, friendlyReason } from "./productCopy";
 import { listPrice } from "./quote";
+import { getQuantityStats } from "./quantities";
 
 /** Thresholds, in one place. share = fraction of similar "stayed" bundles containing the product. */
 export const STARTER_CONFIG = {
@@ -48,6 +49,7 @@ export function getSegmentStats(): Map<string, SegmentStats> {
 
 /** Call at server start so the first customer doesn't wait. */
 export function warmStarterCache() {
+  getQuantityStats();
   loadGstinRegistry();
   getSegmentStats();
 }

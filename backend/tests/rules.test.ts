@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { checkBundle, getEligibleProducts, defaultQuantity, BusinessProfile } from "@/lib/rules";
 import { getProduct } from "@/lib/data";
+import { historicQuantity } from "@/lib/quantities";
 import { buildQuote } from "@/lib/quote";
 
 const base: BusinessProfile = {
@@ -35,11 +36,20 @@ describe("rules engine", () => {
     expect(ids).not.toContain("P06");
     expect(ids).toContain("P01");
   });
-  it("default quantities follow the unit", () => {
-    const b = { ...base, employee_count: 200, num_sites: 3 };
-    expect(defaultQuantity(getProduct("P01")!, b)).toBe(3); // per site
-    expect(defaultQuantity(getProduct("P07")!, b)).toBe(50); // per line, capped
-    expect(defaultQuantity(getProduct("P15")!, b)).toBe(1); // per account
+  it("default quantities come from history, with SIMs kept between 2 and 6", () => {
+    const b = { ...base, employee_count: 200, num_sites: 3 }; // prof segment
+    expect(defaultQuantity(getProduct("P07")!, b)).toBe(6); // SIM: capped at 6 (was 50)
+    expect(defaultQuantity(getProduct("P07")!, { ...b, employee_count: 1 })).toBe(2); // SIM: minimum 2
+    expect(defaultQuantity(getProduct("P15")!, b)).toBe(1); // per account: unit rule
+    const q = defaultQuantity(getProduct("P16")!, b); // per user: clamped to the segment's historic max
+    expect(q).toBeGreaterThanOrEqual(1);
+    expect(q).toBeLessThanOrEqual(19);
+  });
+  it("falls back to the unit rule when there is no history for that segment + product", () => {
+    // Nobody in the micro segment bought SD-WAN (P10, per site), so we use the unit rule: one per site.
+    const micro = { ...base, segment: "micro", num_sites: 4 };
+    expect(historicQuantity(getProduct("P10")!, micro)).toBeNull();
+    expect(defaultQuantity(getProduct("P10")!, micro)).toBe(4);
   });
 });
 
