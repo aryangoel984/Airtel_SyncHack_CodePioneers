@@ -55,6 +55,9 @@
 - Frontend runs Next 16 with cache components on: any client page using `useParams` etc. needs a `<Suspense>` wrapper (see `app/order/[id]/page.tsx`). Read `frontend/node_modules/next/dist/docs/` before changing Next features (`frontend/AGENTS.md`).
 - Frontend `lib/types.ts` is a hand-copied mirror of backend response types. **Keep it in sync** when backend responses change.
 
+## Git rules
+- Never add Co-Authored-By, Claude-Session or 'Generated with Claude Code' lines to commit messages or PR descriptions.
+
 ## Folder structure
 ```
 backend/                 Express + TypeScript API, port 4000
