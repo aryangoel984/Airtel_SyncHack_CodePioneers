@@ -12,3 +12,9 @@ export function maskMobile(mobile: string): string {
   if (d.length <= 4) return "*".repeat(d.length);
   return d.slice(0, 2) + "*".repeat(d.length - 4) + d.slice(-2);
 }
+
+// Udyam numbers: keep the public prefix, hide most digits. UDYAM-KL-00-3078801 -> UDYAM-KL-00-****801
+export function maskUdyam(u: string): string {
+  const m = (u ?? "").match(/^(UDYAM-[A-Z]{2}-\d{2}-)(\d{7})$/);
+  return m ? m[1] + "****" + m[2].slice(-3) : maskId(u);
+}

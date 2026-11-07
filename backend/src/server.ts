@@ -11,6 +11,7 @@ import { bundlesRouter } from "./routes/bundles";
 import { ordersRouter } from "./routes/orders";
 import { warmStarterCache } from "./lib/starter";
 import { advisorRouter } from "./routes/advisor";
+import { kycRouter } from "./routes/kyc";
 import { initModels } from "./lib/advisor/llm";
 
 // Load CSVs and compute the starter-bundle statistics once, at startup.
@@ -31,6 +32,7 @@ app.use("/api/quote", quoteRouter);
 app.use("/api/bundles", bundlesRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/advisor", advisorRouter);
+app.use("/api/kyc", kycRouter);
 
 // Simple error handler: bad JSON -> 400, anything else -> 500 (no stack traces to the client).
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
