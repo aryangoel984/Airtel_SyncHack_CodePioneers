@@ -5,3 +5,10 @@ export function maskId(id: string): string {
   if (id.length <= 7) return "*".repeat(id.length);
   return id.slice(0, 4) + "*".repeat(id.length - 7) + id.slice(-3);
 }
+
+// Mask a mobile number: 9876543221 -> 98******21 (first 2 and last 2 digits).
+export function maskMobile(mobile: string): string {
+  const d = (mobile ?? "").replace(/\D/g, "");
+  if (d.length <= 4) return "*".repeat(d.length);
+  return d.slice(0, 2) + "*".repeat(d.length - 4) + d.slice(-2);
+}

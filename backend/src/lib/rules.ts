@@ -14,10 +14,17 @@ export interface BundleItem {
   quantity: number;
 }
 
+/** Machine-readable reason, so the UI can show friendly text in any language. */
+export interface ReasonCode {
+  code: "tier" | "employees" | "sites" | "gstin" | "dependency" | "unknown";
+  value?: number; // e.g. the minimum employees / sites required
+}
+
 export interface BlockedItem {
   product_id: string;
   product_name: string;
   reason: string; // plain English
+  codes: ReasonCode[]; // same reasons as structured data
 }
 
 export interface Fix {
@@ -44,24 +51,36 @@ const SEGMENT_CODES: Record<string, string> = {
   "Small multi-site businesses": "multi",
 };
 export const segmentCode = (s: string) => SEGMENT_CODES[s] ?? s;
+/** Reverse lookup: catalogue code -> lead segment name (accepts a name as well). */
+export const segmentName = (s: string) =>
+  Object.keys(SEGMENT_CODES).find((name) => name === s || SEGMENT_CODES[name] === s);
 
-/** Reasons this product can't be sold to this business on its own (ignoring dependencies). */
-function ownProblems(p: Product, b: BusinessProfile): string[] {
-  const out: string[] = [];
-  if (!p.available_city_tiers.includes(b.city_tier)) {
-    const tiers = p.available_city_tiers.map((t) => `tier-${t}`).join(" and ");
-    out.push(`${p.product_name} is only available in ${tiers} cities`);
-  }
-  if (b.employee_count < p.min_employees) {
-    out.push(`${p.product_name} needs at least ${p.min_employees} employees`);
-  }
-  if (b.num_sites < p.min_sites) {
-    out.push(`${p.product_name} needs at least ${p.min_sites} sites`);
-  }
-  if (p.requires_gstin && !b.has_valid_active_gstin) {
-    out.push(`${p.product_name} needs a valid, active GSTIN`);
-  }
+/** Structured reasons this product can't be sold to this business (ignoring dependencies). */
+export function ownProblemCodes(p: Product, b: BusinessProfile): ReasonCode[] {
+  const out: ReasonCode[] = [];
+  if (!p.available_city_tiers.includes(b.city_tier)) out.push({ code: "tier" });
+  if (b.employee_count < p.min_employees) out.push({ code: "employees", value: p.min_employees });
+  if (b.num_sites < p.min_sites) out.push({ code: "sites", value: p.min_sites });
+  if (p.requires_gstin && !b.has_valid_active_gstin) out.push({ code: "gstin" });
   return out;
+}
+
+/** The same reasons as plain-English sentences. */
+function ownProblems(p: Product, b: BusinessProfile): string[] {
+  return ownProblemCodes(p, b).map((c) => {
+    switch (c.code) {
+      case "tier": {
+        const tiers = p.available_city_tiers.map((t) => `tier-${t}`).join(" and ");
+        return `${p.product_name} is only available in ${tiers} cities`;
+      }
+      case "employees":
+        return `${p.product_name} needs at least ${p.min_employees} employees`;
+      case "sites":
+        return `${p.product_name} needs at least ${p.min_sites} sites`;
+      default:
+        return `${p.product_name} needs a valid, active GSTIN`;
+    }
+  });
 }
 
 const isEligible = (p: Product, b: BusinessProfile) => ownProblems(p, b).length === 0;
@@ -120,12 +139,12 @@ export function checkBundle(b: BusinessProfile, items: BundleItem[]): RulesResul
   for (const item of items) {
     const p = getProduct(item.product_id);
     if (!p) {
-      blocked.push({ product_id: item.product_id, product_name: item.product_id, reason: `Unknown product ${item.product_id}` });
+      blocked.push({ product_id: item.product_id, product_name: item.product_id, reason: `Unknown product ${item.product_id}`, codes: [{ code: "unknown" }] });
       continue;
     }
     const problems = ownProblems(p, b);
     if (problems.length) {
-      blocked.push({ product_id: p.product_id, product_name: p.product_name, reason: problems.join("; ") });
+      blocked.push({ product_id: p.product_id, product_name: p.product_name, reason: problems.join("; "), codes: ownProblemCodes(p, b) });
     } else {
       pending.push({ item, p });
     }
@@ -157,6 +176,7 @@ export function checkBundle(b: BusinessProfile, items: BundleItem[]): RulesResul
         product_id: p.product_id,
         product_name: p.product_name,
         reason: `${p.product_name} needs one of: ${names}, but none is available for this business`,
+        codes: [{ code: "dependency" }],
       });
       continue;
     }

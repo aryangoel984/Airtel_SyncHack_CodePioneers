@@ -1,26 +1,22 @@
 @import "tailwindcss";
 
+/* Accel Business look: clean white cards, red accent. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f6f7;
+  --foreground: #1a1a1a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-brand: #e40000;
+  --color-brand-dark: #b80000;
+  --color-brand-soft: #fff0f0;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* system fonts include Devanagari for Hindi */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Devanagari", sans-serif;
 }

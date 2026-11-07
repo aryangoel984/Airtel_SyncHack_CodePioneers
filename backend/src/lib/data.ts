@@ -63,6 +63,7 @@ export interface Lead {
   outcome: string; // Activated | Dropped
   bundle_products: string; // raw "P01x1;P07x2"
   monthly_bundle_value_inr: number | null;
+  churned_within_6_months: boolean; // only meaningful for activated leads
 }
 
 // ---------- Helpers ----------
@@ -154,6 +155,7 @@ export function loadLeads(): Lead[] {
     monthly_bundle_value_inr: r.monthly_bundle_value_inr
       ? num(r.monthly_bundle_value_inr)
       : null,
+    churned_within_6_months: r.churned_within_6_months === "Y",
   }));
   return _leads;
 }

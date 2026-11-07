@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { buildQuote } from "../lib/quote";
+import { quoteWithCopy } from "../lib/productCopy";
 
 export const quoteRouter = Router();
 
@@ -9,5 +10,5 @@ quoteRouter.post("/", (req, res) => {
   if (!body?.profile || !Array.isArray(body?.items)) {
     return res.status(400).json({ error: "Expected { profile, items[] }" });
   }
-  res.json(buildQuote(body.profile, body.items));
+  res.json(quoteWithCopy(buildQuote(body.profile, body.items)));
 });

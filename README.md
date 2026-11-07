@@ -1,36 +1,33 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Project Udyam Digital
 
-## Getting Started
+Airtel SYNC / YTL Hackathon 2026, Track A (fictional operator: Accel Business).
+A small business owner picks a telecom bundle, sees one clear monthly price and confirms it on a phone, in English or Hindi, without a salesperson. All data is synthetic.
 
-First, run the development server:
+**Status:** Step 1 (foundation) and Step 2 (quote screen) are done. Next: AI Advisor, Smart KYC, Tracker, back-office dashboard.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Run it
 ```
+npm run install:all   # installs root, backend and frontend
+npm run dev           # backend http://localhost:4000 + frontend http://localhost:3000
+npm test              # backend tests (Vitest + supertest)
+```
+Open http://localhost:3000 (start page), then "Show my plan". `/dev` is a developer test page.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## How it is organised
+- `backend/` Express + TypeScript API (port 4000). All business logic: rules, pricing, validators, orders.
+- `frontend/` Next.js + Tailwind (port 3000). Only calls the backend; no logic, no CSV reading.
+- `docs/PROBLEM_STATEMENT.md` the full case. `CLAUDE.md` project notes and decisions.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Main API endpoints
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | liveness check |
+| `GET /api/gstin/:gstin`, `GET /api/udyam/:udyam` | mocked government lookups |
+| `GET /api/catalogue` | all products with English/Hindi text |
+| `POST /api/eligible` | products a business profile may buy |
+| `POST /api/bundles/starter` | starter plan from what similar, retained customers bought |
+| `POST /api/quote` | priced quote (runs the rules engine first) |
+| `POST /api/orders`, `GET /api/orders/:id` | place and read an order (mobile number masked) |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Privacy notes (so far)
+Identifiers are masked in logs and responses. The mobile number is the only personal detail collected in Step 2; it is stored in `backend/data/orders.json` (git-ignored) and never returned in full.

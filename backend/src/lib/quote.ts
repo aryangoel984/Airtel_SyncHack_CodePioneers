@@ -1,5 +1,5 @@
 // Quote calculator: runs the rules engine, then prices what is allowed.
-import { getProduct } from "./data";
+import { Product, getProduct } from "./data";
 import { BusinessProfile, BundleItem, BlockedItem, Fix, checkBundle } from "./rules";
 import { TODAY } from "./validators";
 
@@ -9,6 +9,10 @@ import { TODAY } from "./validators";
  * Change this one constant to switch.
  */
 export const PRICE_BASIS: "min" | "max" = "min";
+
+/** List price per unit per month, using the PRICE_BASIS assumption above. */
+export const listPrice = (p: Product) =>
+  PRICE_BASIS === "min" ? p.price_min_inr_per_month : p.price_max_inr_per_month;
 
 export interface QuoteLine {
   product_id: string;
@@ -37,7 +41,7 @@ export function buildQuote(profile: BusinessProfile, items: BundleItem[]): Quote
 
   for (const item of rules.allowed) {
     const p = getProduct(item.product_id)!;
-    const unit_price = PRICE_BASIS === "min" ? p.price_min_inr_per_month : p.price_max_inr_per_month;
+    const unit_price = listPrice(p);
     lines.push({
       product_id: p.product_id,
       product_name: p.product_name,

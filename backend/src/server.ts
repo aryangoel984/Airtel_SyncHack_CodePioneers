@@ -6,6 +6,12 @@ import { udyamRouter } from "./routes/udyam";
 import { catalogueRouter } from "./routes/catalogue";
 import { eligibleRouter } from "./routes/eligible";
 import { quoteRouter } from "./routes/quote";
+import { bundlesRouter } from "./routes/bundles";
+import { ordersRouter } from "./routes/orders";
+import { warmStarterCache } from "./lib/starter";
+
+// Load CSVs and compute the starter-bundle statistics once, at startup.
+warmStarterCache();
 
 export const app = express();
 
@@ -19,6 +25,8 @@ app.use("/api/udyam", udyamRouter);
 app.use("/api/catalogue", catalogueRouter);
 app.use("/api/eligible", eligibleRouter);
 app.use("/api/quote", quoteRouter);
+app.use("/api/bundles", bundlesRouter);
+app.use("/api/orders", ordersRouter);
 
 // Simple error handler: bad JSON -> 400, anything else -> 500 (no stack traces to the client).
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

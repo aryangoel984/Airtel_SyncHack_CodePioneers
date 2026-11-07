@@ -9,11 +9,20 @@
 
 ## Roadmap
 1. **Foundation** (data + rules + lookup APIs) <- done
-2. Quote screen
+2. **Quote screen** <- done
 3. AI Advisor
 4. Smart KYC
 5. Tracker
 6. Back-office dashboard + submission
+
+## From the full problem statement (docs/PROBLEM_STATEMENT.md)
+- Goal: a digital-first journey to discover the right bundle, buy it and get it activated with minimal human effort, on a phone, in the owner's language.
+- **4 required modules:** (1) Advisor: GenAI assistant that asks about the business and recommends a catalogue bundle, explaining why in plain language; (2) Quote and checkout: one transparent monthly price with toggleable add-ons; (3) Smart KYC: upload + extraction + validation, mocked GSTIN/Udyam lookups, clear consent screen; (4) Tracker: order status view instead of calling support. Stretch: voice/WhatsApp front end, back-office view of leads the advisor couldn't close, propensity score.
+- **5 business-case questions:** (1) which segments first and what bundle/price/contract; (2) how needs discovery works without a salesperson (Hindi/regional chat or voice); (3) near-instant KYC while staying DPDP Act 2023 compliant (consent, purpose limitation, data minimisation); (4) role of field force and channel partners; (5) 3-5 success metrics with targets (conversion, time to activate, CAC, 6-month churn).
+- **Submission:** (1) working prototype: demo video <= 3 min + repo; (2) solution architecture diagram; (3) business case, <= 10 slides (template: `6ad9d4887d445_airtel_sync/Submission Template_Sync.pptx`); (4) 1-page data privacy and security note.
+- **Judges run 15 live advisor test scenarios.** The advisor must handle edge cases and NEVER break catalogue eligibility rules.
+- Key numbers: 7% lead-to-activation; steepest drop is needs assessed -> quote accepted (44%); leads with GSTIN activate at 9.6% vs 2.0% without; median bundle ~Rs 6,900/month (micro ~Rs 2,500).
+- Segments (share of base): Micro retail & services 55% (very price sensitive), Professional offices 25%, Small multi-site 15%, Small manufacturers 5%.
 
 ## Rules (from the dataset README)
 - `available_city_tiers`: product only sold in those tiers.
@@ -23,36 +32,56 @@
 - `typical_install_days`: drives the tracker and the expected activation date.
 - GSTIN: real 15-char structure + mod-36 checksum; PAN 4th char is always `X` (accept it).
 - Udyam: `UDYAM-XX-00-1234567`; district `00` is fake but accepted.
-- "Today" is **2026-07-15** (`TODAY` in `lib/validators.ts`). Address proof must be <= 90 days old.
-- Privacy: mask IDs in logs/UI (`lib/mask.ts`), show consent before KYC, explain retention.
-- NEVER modify the original dataset folder; `data/` holds copies.
+- "Today" is **2026-07-15** (`TODAY` in `backend/src/lib/validators.ts`). Address proof must be <= 90 days old.
+- Privacy: mask IDs in logs/UI (`backend/src/lib/mask.ts`), show consent before KYC, explain retention.
+- NEVER modify the original dataset folder; `backend/data/` holds copies.
 
 ## Assumptions / decisions
-- List price = `price_min_inr_per_month` (switch via `PRICE_BASIS` in `lib/quote.ts`).
+- List price = `price_min_inr_per_month` (switch via `PRICE_BASIS` in `backend/src/lib/quote.ts`).
 - One-time setup fee = catalogue setup fee x quantity (matches historic lead data).
 - Contract length = longest `min_contract_months` in the bundle; install days = longest `typical_install_days`.
-- Segment (`target_segments`) is only a recommendation hint, not a blocking rule. `segmentCode()` in `lib/rules.ts` maps lead segment names to catalogue codes.
+- Segment (`target_segments`) is only a recommendation hint, not a blocking rule. `segmentCode()` in `backend/src/lib/rules.ts` maps lead segment names to catalogue codes.
 - Missing dependency -> engine auto-adds the cheapest eligible required product and reports a fix; if none is eligible the item is blocked.
 - Historic check: 56 activated bundles have some problem; **48 have a blocked product**, the other 8 only lack a dependency product.
 
+## Step 2 decisions
+- **Starter bundles** (`backend/src/lib/starter.ts`): from ACTIVATED, non-churned leads in the same segment. Base = products in >= 40% of bundles, add-ons = 10-40% (`STARTER_CONFIG`). Computed once at startup and cached. Everything runs through the rules engine with the customer's real profile.
+- Only ONE internet plan and ONE SIM plan go in the base bundle (the most common eligible one); the others appear in "more options". An add-on that would force an extra product (e.g. Static IP on a leased line) stays in "more options" instead of the add-on list.
+- Default quantities (Step 1 rules) make SIM-heavy bundles large (per line = staff, cap 50). Tune `defaultQuantity` if the typical price looks too high.
+- Blocked items carry structured `codes`; `productCopy.ts` turns them into customer text (EN/HI), e.g. "Needs a GST number".
+- Customers never see product codes (P01...). The UI only shows `copy` names from the backend.
+- Orders: `backend/data/orders.json` (git-ignored), ids `UD-2026-0001`, server recalculates prices, mobile stored in full but only ever returned masked (`98******21`). Order times use the simulated clock (TODAY's date + real time of day). Writes go through a queue.
+- Frontend runs Next 16 with cache components on: any client page using `useParams` etc. needs a `<Suspense>` wrapper (see `app/order/[id]/page.tsx`). Read `frontend/node_modules/next/dist/docs/` before changing Next features (`frontend/AGENTS.md`).
+- Frontend `lib/types.ts` is a hand-copied mirror of backend response types. **Keep it in sync** when backend responses change.
+
 ## Folder structure
 ```
-data/        copies of the 4 CSVs
-lib/         data.ts (loaders), validators.ts, mask.ts, lookups.ts, rules.ts, quote.ts
-app/         page.tsx (test page) + api/{gstin,udyam,quote,catalogue,eligible}
-tests/       vitest tests (validators, rules+quote, historic-leads)
+backend/                 Express + TypeScript API, port 4000
+  data/                  4 CSVs (+ orders.json at runtime, git-ignored)
+  src/server.ts          app, CORS (localhost:3000 only), error handler, /api/health
+  src/lib/               data, validators, mask, lookups, rules, quote,
+                         productCopy (EN/HI text), starter, orders, validate (input checks)
+  src/routes/            gstin, udyam, catalogue, eligible, quote, bundles, orders
+  tests/                 validators, rules+quote, historic-leads, starter, orders
+frontend/                Next.js + Tailwind, port 3000 (no business logic)
+  app/                   page.tsx (start form), quote/, order/[id]/, dev/ (API test page)
+  components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView
+  lib/                   api.ts (backend client), types.ts, i18n.ts (EN/HI strings), LangContext, profile
+docs/PROBLEM_STATEMENT.md
 ```
 
-## API
-- `GET /api/gstin/:gstin`, `GET /api/udyam/:udyam`
-- `GET /api/catalogue`
-- `POST /api/eligible` body = business profile
+## API (all under http://localhost:4000)
+- `GET /api/health`, `GET /api/gstin/:gstin`, `GET /api/udyam/:udyam`, `GET /api/catalogue`
+- `POST /api/eligible` body = profile
+- `POST /api/bundles/starter` body = profile -> `{ based_on, base, addons, more, blocked, fixes }`
 - `POST /api/quote` body = `{ profile, items: [{product_id, quantity}] }`
-- Profile = `{ segment, city_tier, employee_count, num_sites, has_valid_active_gstin }`
+- `POST /api/orders` body = `{ profile, items, language, mobile }`; `GET /api/orders/:id`
+- Profile = `{ segment, city_tier, employee_count, num_sites, has_valid_active_gstin }`; segment = `micro | prof | multi | mfg`
 
 ## Run and test
 ```
-npm install
-npm run dev      # http://localhost:3000
-npm test         # vitest (prints the historic-bundle count)
+npm run install:all
+npm run dev      # backend :4000 + frontend :3000
+npm test         # backend Vitest + supertest (30 tests; prints the historic-bundle count)
 ```
+Backend env: `backend/.env.example`. Frontend env: `frontend/.env.example` (`NEXT_PUBLIC_API_URL`).
