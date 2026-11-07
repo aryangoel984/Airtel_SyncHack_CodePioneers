@@ -15,29 +15,31 @@ import { copyFor } from "../productCopy";
 import { LANGUAGES } from "./config";
 
 // ---------------- Tool definitions (OpenAI-style function calling) ----------------
+// Groq checks the model's tool arguments against this schema and rejects the WHOLE request (HTTP 400) on any mismatch.
+// So the schema is deliberately lenient (plain strings / numbers / null) and the allowed values are described in text.
+// Our own code (validateSlots) then normalises and checks every value, and reports problems back to the model.
+const WISHES_HELP = `allowed: ${WISH_KEYS.join(", ")}`;
 export const TOOL_DEFS = [
   {
     type: "function",
     function: {
       name: "update_profile",
-      description:
-        "Save facts the customer told you about their business. Call it every time you learn something new, with ONLY the new or changed fields. Returns which required details are still missing.",
+      description: "Save details the customer gave (only new or changed fields). Returns what is still missing.",
       parameters: {
         type: "object",
         properties: {
-          business_type: { type: "string", description: "What the business is, in the customer's words (e.g. kirana store, dental clinic)" },
-          segment: { type: "string", enum: ["micro", "prof", "multi", "mfg"], description: "Only if you are sure and business_type is unusual: micro = small shop/salon/pharmacy; prof = clinic/CA/coaching/office; multi = several outlets; mfg = factory/workshop" },
-          employee_count: { type: "integer", description: "Number of people working in the business (convert vague answers like '4-5 log' to one number and confirm it)" },
-          num_sites: { type: "integer", description: "Number of locations (shops, outlets, offices, factories)" },
-          city: { type: "string", description: "City name in English letters (e.g. Lucknow)" },
-          city_tier: { type: "integer", enum: [1, 2], description: "ONLY if the city is unknown to you and the customer told you: 1 = big metro city, 2 = smaller city" },
-          has_gstin: { type: "boolean", description: "Whether the business has a GST number" },
-          current_internet: { type: "string", enum: [...CURRENT_INTERNET], description: "Current internet setup" },
-          wishes: { type: "array", items: { type: "string", enum: [...WISH_KEYS] }, description: "FULL list of what the customer wants (replaces the old list). sim_only = wants ONLY a mobile plan" },
-          budget_per_month: { type: "integer", description: "Monthly budget in rupees, only if the customer stated one" },
-          language: { type: "string", enum: [...LANGUAGES], description: "Language the customer is writing in" },
+          business_type: { type: ["string", "null"], description: "In the customer's words, e.g. kirana store" },
+          segment: { type: ["string", "null"], description: "Only for unusual business types. One of: micro (shop/salon/pharmacy), prof (clinic/CA/coaching/office), multi (several outlets), mfg (factory)" },
+          employee_count: { type: ["integer", "string", "null"], description: "People working in the business" },
+          num_sites: { type: ["integer", "string", "null"], description: "Number of locations" },
+          city: { type: ["string", "null"], description: "City in English letters" },
+          city_tier: { type: ["integer", "string", "null"], description: "Only if the city is unknown to you: 1 = big metro, 2 = smaller city" },
+          has_gstin: { type: ["boolean", "string", "null"] },
+          current_internet: { type: ["string", "null"], description: `One of: ${CURRENT_INTERNET.join(", ")}` },
+          wishes: { type: ["array", "null"], items: { type: "string" }, description: `FULL list of what they want (replaces the old list); ${WISHES_HELP}. sim_only = only a mobile plan` },
+          budget_per_month: { type: ["integer", "string", "null"], description: "Rupees, only if stated" },
+          language: { type: ["string", "null"], description: `One of: ${LANGUAGES.join(", ")}` },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -45,12 +47,11 @@ export const TOOL_DEFS = [
     type: "function",
     function: {
       name: "check_product",
-      description: "Check whether something the customer asks about can be sold to THIS business, with the reason and the closest allowed alternative. Use for questions like 'can I get 1 Gbps?' or 'do you have WhatsApp?'.",
+      description: "Can this be sold to THIS business? Gives the reason and closest allowed alternative.",
       parameters: {
         type: "object",
-        properties: { item: { type: "string", description: "What they asked about, e.g. '1 Gbps internet', 'CCTV', 'WhatsApp API', 'DTH'" } },
+        properties: { item: { type: "string", description: "e.g. '1 Gbps internet', 'CCTV', 'DTH'" } },
         required: ["item"],
-        additionalProperties: false,
       },
     },
   },
@@ -58,15 +59,13 @@ export const TOOL_DEFS = [
     type: "function",
     function: {
       name: "get_recommendation",
-      description: "Build the recommended plan with exact items, quantities, prices and the monthly total. Call it once the required details are known, and again whenever the business details, wishes or budget change. Never call it with missing details.",
+      description: "Build the plan with exact items, quantities, prices and total. Only when all required details are known.",
       parameters: {
         type: "object",
         properties: {
-          wishes: { type: "array", items: { type: "string", enum: [...WISH_KEYS] }, description: "Optional: override the saved wishes" },
-          only_these: { type: "boolean", description: "true when the customer wants ONLY the things in wishes (e.g. 'only CCTV', 'only a mobile plan') and not a full starter plan" },
-          budget_per_month: { type: "integer", description: "Optional monthly budget in rupees" },
+          only_these: { type: ["boolean", "string", "null"], description: "true if they want ONLY the wished things (not a full plan)" },
+          budget_per_month: { type: ["integer", "string", "null"] },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -74,12 +73,11 @@ export const TOOL_DEFS = [
     type: "function",
     function: {
       name: "request_human",
-      description: "Ask a human expert to call the customer back. Use when they ask for a person, are clearly frustrated, or their business is very large.",
+      description: "Ask a human expert to call the customer back.",
       parameters: {
         type: "object",
-        properties: { reason: { type: "string", enum: ["user_asked", "too_large", "frustrated", "other"] } },
+        properties: { reason: { type: "string", description: "One of: user_asked, too_large, frustrated, other" } },
         required: ["reason"],
-        additionalProperties: false,
       },
     },
   },
@@ -195,6 +193,7 @@ export interface ToolOutcome { result: unknown; newRecommendation?: boolean }
 export function runTool(s: Session, name: string, rawArgs: string): ToolOutcome {
   let args: unknown;
   try { args = rawArgs ? JSON.parse(rawArgs) : {}; } catch { return { result: { error: "arguments were not valid JSON" } }; }
+  if (args && typeof args === "object") args = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== null)); // ignore nulls
 
   switch (name) {
     case "update_profile": {
@@ -244,15 +243,14 @@ export function runTool(s: Session, name: string, rawArgs: string): ToolOutcome 
     }
 
     case "get_recommendation": {
-      const a = args as { wishes?: unknown; only_these?: unknown; budget_per_month?: unknown };
-      const { fields } = validateSlots({ wishes: a.wishes, budget_per_month: a.budget_per_month });
-      if (fields.wishes) s.profile.wishes = fields.wishes;
+      const a = args as { only_these?: unknown; budget_per_month?: unknown };
+      const { fields } = validateSlots({ budget_per_month: a.budget_per_month });
       if (fields.budget_per_month !== undefined) s.profile.budget_per_month = fields.budget_per_month;
       const missing = missingSlots(s.profile);
       if (missing.length) return { result: { error: "missing_required_details", missing_required: missing } };
       s.recommendationCount += 1;
       const rec = buildRecommendation(s.profile, {
-        wishes: s.profile.wishes, only_these: a.only_these === true,
+        wishes: s.profile.wishes, only_these: a.only_these === true || a.only_these === "true",
         budget: s.profile.budget_per_month,
       }, s.recommendationCount);
       s.recommendation = rec;

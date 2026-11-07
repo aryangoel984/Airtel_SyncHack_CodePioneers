@@ -9,9 +9,15 @@ describe("slot validation", () => {
     expect(fields.wishes).toEqual(["cctv"]);
   });
   it("rejects bad types and ranges", () => {
-    const { fields, errors } = validateSlots({ employee_count: "five", num_sites: 0, has_gstin: "yes", city_tier: 3, wishes: ["free-1gbps"], budget_per_month: 5 });
+    const { fields, errors } = validateSlots({ employee_count: "five", num_sites: 0, has_gstin: "maybe", city_tier: 3, wishes: ["free-stuff"], budget_per_month: 5 });
     expect(errors.length).toBe(6);
-    expect(fields).toEqual({});
+    expect(fields.wishes).toEqual([]);
+    expect(fields.employee_count).toBeUndefined();
+  });
+  it("is forgiving about harmless differences (numbers as text, yes/no text, nulls, near-miss wish names)", () => {
+    const { fields, errors } = validateSlots({ employee_count: "12", num_sites: "३", has_gstin: "no", segment: null, wishes: ["whatsapp_catalogue", "CCTV"], current_internet: "mobile hotspot" });
+    expect(errors).toEqual([]);
+    expect(fields).toMatchObject({ employee_count: 12, num_sites: 3, has_gstin: false, wishes: ["whatsapp", "cctv"], current_internet: "mobile_hotspot" });
   });
   it("rejects a decimal or huge number of staff", () => {
     expect(validateSlots({ employee_count: 4.5 }).errors).toHaveLength(1);

@@ -46,6 +46,7 @@ export interface Session {
   handoff: { reason: string; callbackId: string } | null;
   modelsUsed: Record<string, number>;
   guardrailHits: number;
+  tokensUsed: number;
 }
 
 const sessions = new Map<string, Session>();
@@ -111,7 +112,7 @@ export function newSession(language: AdvisorLang = "en"): Session {
     history: [], mode: "ai", guided: { wishesAsked: false },
     recommendation: null, recommendationCount: 0,
     outcome: "in_progress", lastSlot: "start", handoff: null,
-    modelsUsed: {}, guardrailHits: 0,
+    modelsUsed: {}, guardrailHits: 0, tokensUsed: 0,
   };
   sessions.set(s.id, s);
   return s;

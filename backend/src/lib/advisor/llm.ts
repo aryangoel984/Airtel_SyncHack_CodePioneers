@@ -10,15 +10,21 @@ export interface LlmMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
-export interface LlmReply { content: string | null; toolCalls: ToolCall[] }
+export interface LlmReply { content: string | null; toolCalls: ToolCall[]; totalTokens?: number }
 
 /** Anything that can answer a chat (the real Groq client, or a fake one in tests). */
 export interface LlmClient {
-  complete(model: string, messages: LlmMessage[], tools: unknown[]): Promise<LlmReply>;
+  complete(model: string, messages: LlmMessage[], tools: unknown[], toolChoice?: "auto" | "required"): Promise<LlmReply>;
   listModels(): Promise<string[]>;
 }
 
 export class LlmUnavailableError extends Error {}
+
+/** Short, safe description of an API error for logs (status + first part of the message; never headers or keys). */
+function describeError(e: unknown): string {
+  const err = e as { status?: number; message?: string; name?: string };
+  return `${err.status ?? err.name ?? "error"}: ${(err.message ?? "").replace(/\s+/g, " ").slice(0, 200)}`;
+}
 
 // ---------- the real client ----------
 export class GroqClient implements LlmClient {
@@ -34,9 +40,9 @@ export class GroqClient implements LlmClient {
     return res.data.map((m) => m.id);
   }
 
-  async complete(model: string, messages: LlmMessage[], tools: unknown[]): Promise<LlmReply> {
+  async complete(model: string, messages: LlmMessage[], tools: unknown[], toolChoice: "auto" | "required" = "auto"): Promise<LlmReply> {
     const base = {
-      model, messages, tools, tool_choice: "auto",
+      model, messages, tools, tool_choice: toolChoice,
       temperature: ADVISOR_CONFIG.temperature,
       max_completion_tokens: ADVISOR_CONFIG.maxCompletionTokens,
       include_reasoning: false, // documented switch: reasoning is not returned
@@ -51,12 +57,13 @@ export class GroqClient implements LlmClient {
       if (this.effortAndHide && err.status === 400 && /reasoning/i.test(err.message ?? "")) {
         this.effortAndHide = false; // fall back to just hiding reasoning, then retry once
         console.warn("[advisor] reasoning_effort + include_reasoning rejected; using include_reasoning=false only");
-        return this.complete(model, messages, tools);
+        return this.complete(model, messages, tools, toolChoice);
       }
       throw e;
     }
-    const msg = (res as { choices: { message: { content?: string | null; tool_calls?: ToolCall[] } }[] }).choices[0].message;
-    return { content: msg.content ?? null, toolCalls: (msg.tool_calls ?? []).map((t) => ({ id: t.id, type: "function", function: { name: t.function.name, arguments: t.function.arguments } })) };
+    const full = res as { choices: { message: { content?: string | null; tool_calls?: ToolCall[] } }[]; usage?: { total_tokens?: number } };
+    const msg = full.choices[0].message;
+    return { totalTokens: full.usage?.total_tokens, content: msg.content ?? null, toolCalls: (msg.tool_calls ?? []).map((t) => ({ id: t.id, type: "function", function: { name: t.function.name, arguments: t.function.arguments } })) };
   }
 }
 
@@ -101,19 +108,49 @@ export async function initModels(): Promise<void> {
   }
 }
 
-/** Primary model first; on any error, timeout or 429, one retry on the fallback model. */
-export async function completeWithFallback(messages: LlmMessage[], tools: unknown[]): Promise<LlmReply & { model: string }> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Groq says "Please try again in 3.5s" (or 1m2s) in its 429 message. Returns milliseconds, or null if it's not a rate limit. */
+export function retryAfterMs(e: unknown): number | null {
+  const err = e as { status?: number; message?: string };
+  if (err.status !== 429) return null;
+  const m = (err.message ?? "").match(/try again in (?:(\d+)m)?\s*([\d.]+)s/i);
+  if (!m) return 5000;
+  return Math.ceil(((Number(m[1] ?? 0) * 60) + Number(m[2])) * 1000) + 300;
+}
+
+/**
+ * Primary model first; on any error, timeout or 429, one retry on the fallback model.
+ * If BOTH are rate-limited and Groq says the limit clears soon, wait that long and try the primary once more.
+ * Only then does the caller switch to guided mode.
+ */
+export async function completeWithFallback(
+  messages: LlmMessage[], tools: unknown[], toolChoice: "auto" | "required" = "auto",
+): Promise<LlmReply & { model: string }> {
   const { primary, fallback } = activeModels();
   const c = getClient(); // throws LlmUnavailableError when there is no key
+  let e1: unknown, e2: unknown;
   try {
-    return { ...(await c.complete(primary, messages, tools)), model: primary };
-  } catch (e1) {
-    console.warn(`[advisor] ${primary} failed (${(e1 as { status?: number }).status ?? (e1 as Error).name}); trying ${fallback}`);
-    try {
-      return { ...(await c.complete(fallback, messages, tools)), model: fallback };
-    } catch (e2) {
-      console.warn(`[advisor] ${fallback} failed (${(e2 as { status?: number }).status ?? (e2 as Error).name}); switching to guided mode`);
-      throw new LlmUnavailableError("both models failed");
+    return { ...(await c.complete(primary, messages, tools, toolChoice)), model: primary };
+  } catch (e) { e1 = e; }
+  console.warn(`[advisor] ${primary} failed (${describeError(e1)}); trying ${fallback}`);
+  try {
+    return { ...(await c.complete(fallback, messages, tools, toolChoice)), model: fallback };
+  } catch (e) { e2 = e; }
+  console.warn(`[advisor] ${fallback} failed (${describeError(e2)})`);
+
+  const waits = [retryAfterMs(e1), retryAfterMs(e2)].filter((w): w is number => w !== null);
+  if (waits.length === 2) {
+    const wait = Math.min(...waits);
+    if (wait <= ADVISOR_CONFIG.rateLimitPatienceMs) {
+      console.warn(`[advisor] both models rate-limited; waiting ${Math.round(wait / 1000)}s then retrying ${primary}`);
+      await sleep(wait);
+      try {
+        return { ...(await c.complete(primary, messages, tools, toolChoice)), model: primary };
+      } catch (e) {
+        console.warn(`[advisor] ${primary} failed again (${describeError(e)}); switching to guided mode`);
+      }
     }
   }
+  throw new LlmUnavailableError("both models failed");
 }

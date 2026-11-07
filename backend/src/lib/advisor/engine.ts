@@ -5,7 +5,8 @@ import { ADVISOR_CONFIG, AdvisorLang, FRUSTRATION_PATTERNS, HUMAN_REQUEST_PATTER
 import { Session, getSession, newSession, saveSummary, setOutcome } from "./session";
 import { redactMessage } from "./redact";
 import { LlmMessage, LlmUnavailableError, completeWithFallback } from "./llm";
-import { TOOL_DEFS, applyGstinLookup, publicProfile, requestHuman, runTool } from "./tools";
+import { TOOL_DEFS, applyFields, applyGstinLookup, publicProfile, requestHuman, runTool } from "./tools";
+import { extractWishes, lookupCity } from "./mapping";
 import { Recommendation, missingSlots, summarizeForLlm } from "./recommend";
 import { buildSystemPrompt } from "./systemPrompt";
 import { checkReply, collectAmounts, needsNameChecks } from "./guardrail";
@@ -27,6 +28,7 @@ export interface ChatResponse {
   mode: "ai" | "guided";
   modelUsed: string | null;
   guardrail: { hits: number };
+  tokensUsed: number; // total Groq tokens in this conversation so far
 }
 
 const log = (msg: string) => console.log(`[advisor] ${msg}`);
@@ -36,7 +38,7 @@ function response(s: Session, reply: string, modelUsed: string | null): ChatResp
     sessionId: s.id, reply, quickReplies: quickRepliesFor(s), profile: publicProfile(s),
     missingSlots: missingSlots(s.profile), recommendation: s.recommendation,
     handoff: s.handoff ? { ...s.handoff, needsMobile: true } : null,
-    mode: s.mode, modelUsed, guardrail: { hits: s.guardrailHits },
+    mode: s.mode, modelUsed, guardrail: { hits: s.guardrailHits }, tokensUsed: s.tokensUsed,
   };
 }
 
@@ -74,6 +76,7 @@ export async function handleChat(input: { sessionId?: string; message: string; l
     if (["checksum_failed", "bad_format"].includes(red.gstin.status)) notes.push("The GSTIN failed validation: ask the customer to re-check the number.");
     if (red.gstin.status === "Active") notes.push("The GSTIN is Active and its details were filled in automatically. Do not ask about GST, name or city again.");
   }
+  safetyNetSave(s, red.safeText);
   const askedHuman = HUMAN_REQUEST_PATTERNS.some((re) => re.test(message));
   const frustrated = FRUSTRATION_PATTERNS.some((re) => re.test(message));
   if (askedHuman) requestHuman(s, "user_asked");
@@ -114,6 +117,25 @@ export async function handleChat(input: { sessionId?: string; message: string; l
   return response(s, reply, modelUsed);
 }
 
+const NEGATION_WORDS = /(\bnot\b|n't|\bno\b|\bwithout\b|\bnahi\b|\bnahin\b|\bmat\b|नहीं|नही|बिना)/i;
+
+/**
+ * Safety net: details that are clear from the text alone are saved by code BEFORE the LLM runs,
+ * in case the model forgets to call update_profile. (Only a KNOWN city, and wishes in messages without a negation.)
+ * The model can still correct or remove them with update_profile.
+ */
+function safetyNetSave(s: Session, text: string) {
+  const fields: { city?: string; wishes?: ReturnType<typeof extractWishes> } = {};
+  const city = lookupCity(text);
+  if (city && !s.profile.city) fields.city = city.city;
+  if (!NEGATION_WORDS.test(text)) {
+    const wishes = extractWishes(text).filter((w) => w !== "internet");
+    const merged = [...new Set([...s.profile.wishes, ...wishes])];
+    if (wishes.length && merged.length !== s.profile.wishes.length) fields.wishes = merged;
+  }
+  if (Object.keys(fields).length) applyFields(s, fields);
+}
+
 // ---------------- the AI turn ----------------
 async function aiTurn(s: Session, safeText: string, notes: string[]): Promise<{ reply: string; model: string | null }> {
   const llmText = notes.length ? `${safeText}\n\n[SERVER NOTE: ${notes.join(" ")}]` : safeText;
@@ -133,7 +155,9 @@ async function aiTurn(s: Session, safeText: string, notes: string[]): Promise<{ 
   let correctionsLeft = 1;
 
   for (let round = 0; round < ADVISOR_CONFIG.maxToolRounds; round++) {
+    // (tool_choice "required" is not used: gpt-oss on Groq then fails with a 400 whenever it prefers to just answer.)
     const r = await completeWithFallback(messages, TOOL_DEFS); // throws LlmUnavailableError when all models fail
+    s.tokensUsed += r.totalTokens ?? 0;
     model = r.model;
     s.modelsUsed[r.model] = (s.modelsUsed[r.model] ?? 0) + 1;
 

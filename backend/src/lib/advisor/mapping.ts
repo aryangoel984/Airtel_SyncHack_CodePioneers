@@ -181,24 +181,55 @@ export interface SlotFields {
   language?: AdvisorLang;
 }
 
-/** Check every field the LLM sends. Returns the clean fields and a list of problems. */
+/** Digits (also Devanagari ०-९) in a string -> number. */
+const toNumber = (v: unknown): number | undefined => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim()) {
+    const ascii = v.replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)));
+    if (/^\s*\d+\s*$/.test(ascii)) return Number(ascii);
+  }
+  return undefined;
+};
+const toBool = (v: unknown): boolean | undefined => {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") {
+    if (/^(true|yes|y|haan|हाँ|हां)$/i.test(v.trim())) return true;
+    if (/^(false|no|n|nahi|nahin|नहीं|नही)$/i.test(v.trim())) return false;
+  }
+  return undefined;
+};
+const internetFromText = (t: string): CurrentInternet | undefined => {
+  const x = t.toLowerCase().replace(/[\s-]+/g, "_");
+  if ((CURRENT_INTERNET as readonly string[]).includes(x)) return x as CurrentInternet;
+  if (/hotspot|mobile/.test(x)) return "mobile_hotspot";
+  if (/home/.test(x)) return "home_broadband";
+  if (/leased/.test(x)) return "leased_line";
+  if (/mixed/.test(x)) return "mixed";
+  if (/broadband|fib(re|er)|wifi/.test(x)) return "business_broadband";
+  if (/none|no_?internet|nothing/.test(x)) return "none";
+  return undefined;
+};
+
+/** Check every field the LLM sends: normalise what we can, report the rest. Nulls count as "not provided". */
 export function validateSlots(input: unknown): { fields: SlotFields; errors: string[] } {
   const errors: string[] = [];
   const f: SlotFields = {};
-  const r = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const raw = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const r = Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== null && v !== undefined && v !== ""));
 
   if (r.business_type !== undefined) {
-    if (typeof r.business_type === "string" && r.business_type.trim() && r.business_type.length <= 80) f.business_type = r.business_type.trim();
+    if (typeof r.business_type === "string" && r.business_type.length <= 80) f.business_type = r.business_type.trim();
     else errors.push("business_type must be a short text");
   }
   if (r.segment !== undefined) {
-    if (["micro", "prof", "multi", "mfg"].includes(r.segment as string)) f.segment = r.segment as SegCode;
+    const seg = String(r.segment).toLowerCase().trim();
+    if (["micro", "prof", "multi", "mfg"].includes(seg)) f.segment = seg as SegCode;
     else errors.push("segment must be one of micro, prof, multi, mfg");
   }
   const int = (name: string, lo: number, hi: number): number | undefined => {
-    const v = r[name];
-    if (v === undefined) return undefined;
-    if (typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi) return v;
+    if (r[name] === undefined) return undefined;
+    const v = toNumber(r[name]);
+    if (v !== undefined && Number.isInteger(v) && v >= lo && v <= hi) return v;
     errors.push(`${name} must be a whole number from ${lo} to ${hi}`);
     return undefined;
   };
@@ -206,27 +237,44 @@ export function validateSlots(input: unknown): { fields: SlotFields; errors: str
   const sites = int("num_sites", 1, 10000); if (sites !== undefined) f.num_sites = sites;
   const budget = int("budget_per_month", 100, 10_000_000); if (budget !== undefined) f.budget_per_month = budget;
   if (r.city !== undefined) {
-    if (typeof r.city === "string" && r.city.trim() && r.city.length <= 60) f.city = r.city.trim();
+    if (typeof r.city === "string" && r.city.length <= 60) f.city = r.city.trim();
     else errors.push("city must be a short text");
   }
   if (r.city_tier !== undefined) {
-    if (r.city_tier === 1 || r.city_tier === 2) f.city_tier = r.city_tier;
+    const t = toNumber(r.city_tier);
+    if (t === 1 || t === 2) f.city_tier = t;
     else errors.push("city_tier must be 1 (big metro) or 2 (smaller city)");
   }
   if (r.has_gstin !== undefined) {
-    if (typeof r.has_gstin === "boolean") f.has_gstin = r.has_gstin;
+    const b = toBool(r.has_gstin);
+    if (b !== undefined) f.has_gstin = b;
     else errors.push("has_gstin must be true or false");
   }
   if (r.current_internet !== undefined) {
-    if ((CURRENT_INTERNET as readonly string[]).includes(r.current_internet as string)) f.current_internet = r.current_internet as CurrentInternet;
+    const ci = internetFromText(String(r.current_internet));
+    if (ci) f.current_internet = ci;
     else errors.push(`current_internet must be one of ${CURRENT_INTERNET.join(", ")}`);
   }
   if (r.wishes !== undefined) {
-    if (Array.isArray(r.wishes) && r.wishes.every((w) => (WISH_KEYS as readonly string[]).includes(w as string))) f.wishes = [...new Set(r.wishes as WishKey[])];
-    else errors.push(`wishes must be a list of: ${WISH_KEYS.join(", ")}`);
+    const list = Array.isArray(r.wishes) ? r.wishes : typeof r.wishes === "string" ? [r.wishes] : null;
+    if (!list) errors.push(`wishes must be a list of: ${WISH_KEYS.join(", ")}`);
+    else {
+      const ok: WishKey[] = [];
+      for (const w of list) {
+        const t = String(w).toLowerCase().trim().replace(/[\s-]+/g, "_");
+        if ((WISH_KEYS as readonly string[]).includes(t)) ok.push(t as WishKey);
+        else {
+          const guess = extractWishes(String(w))[0]; // e.g. "whatsapp_catalogue" -> whatsapp
+          if (guess) ok.push(guess);
+          else errors.push(`unknown wish "${String(w).slice(0, 30)}". Use only: ${WISH_KEYS.join(", ")}`);
+        }
+      }
+      f.wishes = [...new Set(ok)];
+    }
   }
   if (r.language !== undefined) {
-    if ((LANGUAGES as readonly string[]).includes(r.language as string)) f.language = r.language as AdvisorLang;
+    const l = String(r.language).toLowerCase().trim();
+    if ((LANGUAGES as readonly string[]).includes(l)) f.language = l as AdvisorLang;
     else errors.push("unknown language");
   }
   return { fields: f, errors };

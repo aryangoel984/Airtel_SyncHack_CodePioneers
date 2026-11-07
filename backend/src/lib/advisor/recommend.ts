@@ -39,6 +39,8 @@ export interface Recommendation {
   budget: { requested: number | null; within: boolean | null; cheapest_possible_inr: number | null };
   minimal: boolean; // customer wanted only specific things
   indicative: boolean; // too large for the SMB journey: a human expert will confirm
+  /** Popular extras among similar customers that are not in the plan yet (shown as "you may also like") */
+  suggested_addons: { product_id: string; copy: ProductCopy; unit: string; unit_price_inr: number; quantity: number; monthly_inr: number }[];
   based_on: { count: number; line_en: string; line_hi: string } | null;
 }
 
@@ -218,6 +220,10 @@ export function buildRecommendation(
     budget,
     minimal: onlyThese,
     indicative: needsHuman(p) !== null,
+    suggested_addons: starter.addons
+      .filter((a) => !quote.lines.some((l) => l.product_id === a.product_id))
+      .slice(0, 4)
+      .map((a) => ({ product_id: a.product_id, copy: a.copy, unit: a.unit, unit_price_inr: a.unit_price_inr, quantity: a.quantity, monthly_inr: a.monthly_inr })),
     based_on: starter.based_on.count ? starter.based_on : null,
   };
 }
@@ -234,24 +240,23 @@ export function summarizeForLlm(r: Recommendation) {
   return {
     plan_items: r.items.map((i) => ({
       name: i.copy.name_en, name_hindi: i.copy.name_hi, why: i.copy.why_en, quantity: i.quantity,
-      unit: UNIT_EN[i.unit] ?? i.unit, unit_price_inr: i.unit_price_inr, monthly_inr: i.monthly_inr, role: i.role,
+      unit: UNIT_EN[i.unit] ?? i.unit, unit_price_inr: i.unit_price_inr, monthly_inr: i.monthly_inr,
     })),
     monthly_total_inr: r.quote.monthly_total_inr,
     one_time_setup_inr: r.quote.one_time_setup_total_inr,
     contract_months: r.quote.contract_months,
     ready_by_date: r.quote.expected_activation_date,
-    prices_exclude_gst_percent: 18,
-    automatically_added: r.quote.fixes.map((f) => ({ added: f.added_copy.name_en, because_of: f.for_copy.name_en })),
-    not_available_wishes: r.blocked_wishes.map((b) => ({
+    automatically_added: r.quote.fixes.length ? r.quote.fixes.map((f) => ({ added: f.added_copy.name_en, because_of: f.for_copy.name_en })) : undefined,
+    not_available_wishes: r.blocked_wishes.length ? r.blocked_wishes.map((b) => ({
       product: b.copy.name_en, reason: b.reason_en,
       closest_alternative: b.alternative
         ? { name: b.alternative.copy.name_en, unit_price_inr: b.alternative.unit_price_inr, unit: UNIT_EN[b.alternative.unit] ?? b.alternative.unit, already_in_plan: b.alternative.in_plan }
         : null,
-    })),
-    removed_to_fit_budget: r.dropped_for_budget.map((d) => d.copy.name_en),
-    budget: r.budget,
-    only_what_customer_asked_for: r.minimal,
-    indicative_only_expert_will_confirm: r.indicative,
-    based_on: r.based_on?.line_en ?? null,
+    })) : undefined,
+    removed_to_fit_budget: r.dropped_for_budget.length ? r.dropped_for_budget.map((d) => d.copy.name_en) : undefined,
+    budget: r.budget.requested !== null ? r.budget : undefined,
+    indicative_only_expert_will_confirm: r.indicative || undefined,
+    optional_extras: r.suggested_addons.length ? r.suggested_addons.map((a) => ({ name: a.copy.name_en, monthly_inr: a.monthly_inr })) : undefined,
+    based_on: r.based_on?.line_en,
   };
 }

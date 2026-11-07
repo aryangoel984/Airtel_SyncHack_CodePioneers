@@ -7,13 +7,15 @@ export const ADVISOR_CONFIG = {
   apiKey: () => process.env.GROQ_API_KEY || "",
 
   temperature: 0.3,
-  maxCompletionTokens: 2048, // reasoning tokens also count, so keep some room
+  maxCompletionTokens: 700, // reasoning tokens count too. Groq also counts this toward the per-minute token limit
   timeoutMs: 20_000,
   reasoningEffort: "low" as const, // fast chat replies
 
   maxToolRounds: 5, // tool calls per user message
   maxMessageChars: 1000,
-  maxHistoryMessages: 30,
+  maxHistoryMessages: 10, // short memory keeps every call small (Groq limit: 8,000 tokens per minute per model)
+  /** On a 429 from both models, wait up to this long (if Groq says it clears sooner) and retry the primary once. */
+  rateLimitPatienceMs: 20_000,
   sessionTtlMs: 30 * 60 * 1000, // 30 minutes idle
 
   /** Beyond the SMB journey: a human expert should take over. */
