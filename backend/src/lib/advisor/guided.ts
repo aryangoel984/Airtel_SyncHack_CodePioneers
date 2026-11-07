@@ -62,9 +62,10 @@ function parseAnswer(step: NextStep, text: string): SlotFields & { wishesDone?: 
   return out;
 }
 
-export function guidedTurn(s: Session, text: string, justSwitched: boolean): string {
+/** `askedStep` = the question the customer is answering (computed before any automatic saving). */
+export function guidedTurn(s: Session, text: string, justSwitched: boolean, askedStep?: NextStep): string {
   const lang = s.profile.language;
-  const step = nextStep(s);
+  const step = askedStep ?? nextStep(s);
   const prefix = justSwitched ? notice(NOTICES.guidedMode, lang) + " " : "";
 
   if (step === "done" && s.recommendation) return prefix + notice(NOTICES.planAgain, lang);
@@ -84,7 +85,7 @@ export function guidedTurn(s: Session, text: string, justSwitched: boolean): str
     return prefix + recommendationReply(rec, lang);
   }
   // Same question again if we could not read the answer (nothing changed and it wasn't a wishes step)
-  const again = before === after && next === step && step !== "wishes";
+  const again = before === after && next === step && step !== "wishes" && !(step === "city" && s.profile.city_tier !== undefined);
   const q = questionFor(next, lang);
   return prefix + (again ? (lang === "hi" ? "माफ़ कीजिए, मैं समझ नहीं पाया। " : "Sorry, I didn't catch that. ") : "") + q;
 }

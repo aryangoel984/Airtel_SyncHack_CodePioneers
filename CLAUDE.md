@@ -10,7 +10,7 @@
 ## Roadmap
 1. **Foundation** (data + rules + lookup APIs) <- done
 2. **Quote screen** <- done
-3. AI Advisor
+3. **AI Advisor** <- done (see docs/advisor-eval.md for the live evaluation)
 4. Smart KYC
 5. Tracker
 6. Back-office dashboard + submission
@@ -58,19 +58,35 @@
 ## Git rules
 - Never add Co-Authored-By, Claude-Session or 'Generated with Claude Code' lines to commit messages or PR descriptions.
 
+## Step 3: AI Advisor (design, settings, privacy)
+**Principle: the AI talks, the code decides.** The LLM never invents products, quantities, prices or eligibility. Everything comes from tools that call our own rules engine, starter bundles and quote calculator. The plan card in the chat is rendered by the frontend from structured JSON, not from the LLM's text.
+- **Flow:** `message -> redact.ts (GSTIN lookup + PII removal) -> safety-net save -> Groq with tools -> guardrail -> reply`. Code: `backend/src/lib/advisor/` (engine, tools, recommend, mapping, redact, guardrail, guided, templates, session, llm, systemPrompt, config). Route: `backend/src/routes/advisor.ts`.
+- **Tools:** `update_profile`, `check_product`, `get_recommendation`, `request_human`. Schemas are deliberately lenient (strings/numbers/null) because Groq rejects the WHOLE request (HTTP 400) when a model sends an enum value that is not in the schema. Values are normalised and validated in `mapping.ts` (`validateSlots`) instead.
+- **Safety net:** before the LLM runs, a KNOWN city and clearly stated wishes (no negation in the message) are saved by code, in case the model forgets `update_profile`. Handoffs ("talk to a person", frustration, >12 sites or >150 staff) are also triggered by code. Thresholds live in `advisor/config.ts`.
+- **Mappings (code, not LLM):** city->tier and business type->segment come from smb_leads.csv (+ aliases/Hindi names/keywords). **Assumption: 3 or more locations is always "Small multi-site businesses", whatever the business type.** Wishes -> products via a synonym map (English, Hindi, Hinglish); the LLM passes wish keys.
+- **Recommendation rules (`recommend.ts`):** starter bundle + eligible wishes + auto-added dependencies; blocked wishes get a plain reason and the closest allowed alternative; "only X" requests give a minimal plan (SIM-only = 1 SIM per person, max 6); a budget drops wished add-ons first (dearest first), then falls back to cheapest essentials, and reports honestly when impossible (`budget.within`, `cheapest_possible_inr`). The plan also lists `suggested_addons` ("you may also like").
+- **Groq settings:** SDK `groq-sdk` in the backend only. Primary `openai/gpt-oss-120b`, fallback `openai/gpt-oss-20b` (from `backend/.env`, see `.env.example`). `reasoning_effort: "low"`, `include_reasoning: false` (reasoning is never requested, read or stored; only `message.content` and `tool_calls` are used), temperature 0.3, max 700 completion tokens, 20 s timeout, `tool_choice: auto` (`required` made gpt-oss fail with 400s). Startup checks the models list and logs model names only. Primary fails (error/timeout/429) -> one retry on the fallback -> if both are rate-limited and Groq says it clears within 20 s we wait and retry the primary once -> otherwise **guided mode** (no AI: fixed questions with buttons, same recommendation code). Per-IP rate limit on `/api/advisor/*` (20 requests/minute, configurable).
+- **Groq account limits seen on this key:** 8,000 tokens/minute per model and 1,000 requests/day. One advisor turn uses roughly 3-6k tokens, so about one turn per minute per model. For a live demo with many judges, upgrade the Groq tier. The prompt and tool schemas are already compressed for this limit.
+- **Guardrail (`guardrail.ts`):** every LLM reply is checked for rupee amounts not present in tool results, product codes (P01-P25), leaked reasoning/tool names, offering things we don't sell (DTH, laptops, loans...) and recommending a product blocked for this customer. On failure: regenerate once with a correction note, then a safe template reply built from the structured plan. Hits are counted and logged (masked). Name checks run for English/Hindi/Hinglish replies only.
+- **Privacy choices (for the 1-page privacy note):** the LLM only ever sees redacted text: a GSTIN is looked up on OUR server and replaced by a token like `[GSTIN_PROVIDED: Active, Saffron Bakers, Ludhiana, Punjab]`; Aadhaar-like numbers, PAN, mobile numbers and emails become `[REDACTED]` and the customer is told not to share them. The Groq key stays on the server (never logged, never sent to the browser, `backend/.env` is git-ignored). Conversation state is in memory per session and **deleted after 30 minutes idle**; raw chat text is never written to disk. Only a MASKED summary (outcome, last slot reached, segment, tier, counts, wishes, models used, no identifiers) is saved to `backend/data/advisor_sessions.json` (git-ignored) for the Step 6 dashboard. The browser keeps the transcript in sessionStorage only (cleared when the tab closes). "Talk to a person": the mobile number goes straight to `POST /api/advisor/callback`, never through the AI, and is stored in `backend/data/callbacks.json` (git-ignored) and returned only masked.
+- **Frontend:** `/` is the advisor (language picker with 11 languages in their own scripts, chat, quick-reply chips, typing dots, plan card, "Customise & buy" -> `/quote` with the exact items, "Talk to a person", mic button via the Web Speech API, hidden when unsupported). Old form is at `/form`. Screen text is English or Hindi; the chat itself is in the customer's language. Plan-card product names exist only in English/Hindi (the LLM may not write product names).
+- **Evaluation:** `npm run eval:advisor` (live, real Groq, not part of `npm test`; `-- --only=3,7` to re-run some, `-- --fresh` to start over). Results: `docs/advisor-eval.md` (table + transcripts) and `docs/advisor-eval.json`. Unit tests use a mocked Groq (`backend/tests/advisor/`).
+
 ## Folder structure
 ```
 backend/                 Express + TypeScript API, port 4000
   data/                  4 CSVs (+ orders.json at runtime, git-ignored)
   src/server.ts          app, CORS (localhost:3000 only), error handler, /api/health
+  src/lib/advisor/       AI Advisor (see Step 3 section)
+  scripts/evalAdvisor.ts live advisor evaluation
   src/lib/               data, validators, mask, lookups, rules, quote, segments,
                          quantities + quantityConfig (history-based default quantities),
                          productCopy (EN/HI text), starter, orders, validate (input checks)
   src/routes/            gstin, udyam, catalogue, eligible, quote, bundles, orders
-  tests/                 validators, rules+quote, historic-leads, starter, orders, iqr
+  tests/                 validators, rules+quote, historic-leads, starter, orders, iqr, advisor/*
 frontend/                Next.js + Tailwind, port 3000 (no business logic)
-  app/                   page.tsx (start form), quote/, order/[id]/, dev/ (API test page)
-  components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView
+  app/                   page.tsx (AI Advisor chat), form/ (old start form), quote/, order/[id]/, dev/ (API test page)
+  components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView, chat/ (ChatView, RecommendationCard, PersonDialog, MicButton)
   lib/                   api.ts (backend client), types.ts, i18n.ts (EN/HI strings), LangContext, profile
 docs/PROBLEM_STATEMENT.md
 ```
@@ -81,12 +97,14 @@ docs/PROBLEM_STATEMENT.md
 - `POST /api/bundles/starter` body = profile -> `{ based_on, base, addons, more, blocked, fixes }`
 - `POST /api/quote` body = `{ profile, items: [{product_id, quantity}] }`
 - `POST /api/orders` body = `{ profile, items, language, mobile }`; `GET /api/orders/:id`
+- Advisor: `POST /api/advisor/start {language}`, `POST /api/advisor/chat {sessionId?, message, language?}`, `GET /api/advisor/session/:id`, `POST /api/advisor/session/:id/event {quote_opened|ordered}`, `POST /api/advisor/callback {sessionId, mobile}`, `POST /api/advisor/handoff {sessionId}`
 - Profile = `{ segment, city_tier, employee_count, num_sites, has_valid_active_gstin }`; segment = `micro | prof | multi | mfg`
 
 ## Run and test
 ```
 npm run install:all
 npm run dev      # backend :4000 + frontend :3000
-npm test         # backend Vitest + supertest (36 tests; prints the historic-bundle count)
+npm test         # backend Vitest + supertest (102 tests; prints the historic-bundle count)
+npm run eval:advisor --prefix backend   # live advisor evaluation (needs GROQ_API_KEY in backend/.env)
 ```
 Backend env: `backend/.env.example`. Frontend env: `frontend/.env.example` (`NEXT_PUBLIC_API_URL`).

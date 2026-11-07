@@ -64,6 +64,7 @@ export async function handleChat(input: { sessionId?: string; message: string; l
   if (!s) s = newSession(input.language ?? "en");
   if (input.language && LANGUAGES.includes(input.language) && isNew) s.profile.language = input.language;
 
+  const askedStep = nextStep(s); // the question this message answers (before anything is saved automatically)
   const message = input.message.slice(0, ADVISOR_CONFIG.maxMessageChars);
   const red = redactMessage(message);
   if (red.gstin) applyGstinLookup(s, red.gstin);
@@ -104,7 +105,7 @@ export async function handleChat(input: { sessionId?: string; message: string; l
     }
   }
   if (s.mode === "guided") {
-    reply = guidedTurn(s, red.safeText, switched);
+    reply = guidedTurn(s, red.safeText, switched, askedStep);
     if (red.redacted.length) reply += " " + notice(NOTICES.piiRedacted, s.profile.language);
     if (s.handoff && (askedHuman || frustrated)) reply += " " + notice(NOTICES.handoff, s.profile.language);
     if (red.gstin && ["Cancelled", "Suspended", "not_found"].includes(red.gstin.status)) reply += " " + notice(NOTICES.gstInactive, s.profile.language);

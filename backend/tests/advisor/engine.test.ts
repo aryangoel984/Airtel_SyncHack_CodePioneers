@@ -82,7 +82,10 @@ describe("advisor engine with a mocked Groq", () => {
     expect(r.reply).toMatch(/simple mode/i);
     expect(r.quickReplies.length).toBeGreaterThan(0);
     const sid = r.sessionId;
-    for (const answer of ["2 people", "1 location", "Lucknow", "No GST"]) r = await handleChat({ sessionId: sid, message: answer });
+    for (const answer of ["2 people", "1 location", "Lucknow", "No GST"]) {
+      r = await handleChat({ sessionId: sid, message: answer });
+      expect(r.reply, `after "${answer}"`).not.toMatch(/didn't catch/i); // every answer here is understood
+    }
     expect(r.reply).toMatch(/nothing specific|anything specific/i); // asks about wishes last
     r = await handleChat({ sessionId: sid, message: "Nothing specific, show me a plan" });
     expect(r.recommendation).not.toBeNull();
