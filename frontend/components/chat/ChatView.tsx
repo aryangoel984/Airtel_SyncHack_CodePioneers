@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Header from "@/components/Header";
+import Header, { BrandMark } from "@/components/Header";
 import { useLang } from "@/lib/LangContext";
 import { ApiError, BackendDownError, api } from "@/lib/api";
 import { CHAT_LANGUAGES } from "@/lib/i18n";
@@ -11,10 +11,13 @@ import { saveProfile } from "@/lib/profile";
 import {
   ChatMessage, clearChat, loadChat, saveAdvisorSessionId, saveChat, saveInitialItems,
 } from "@/lib/advisorStore";
-import type { ChatLang, ChatResponse, QuickReply, Recommendation } from "@/lib/types";
+import type { AdvisorProfileView, ChatLang, ChatResponse, QuickReply, Recommendation } from "@/lib/types";
+import Icon from "@/components/ui/Icon";
 import RecommendationCard from "./RecommendationCard";
 import MicButton from "./MicButton";
 import PersonDialog from "./PersonDialog";
+import Landing from "./Landing";
+import BusinessPanel, { ProgressStrip } from "./BusinessPanel";
 
 export default function ChatView() {
   const { t, setLang } = useLang();
@@ -26,6 +29,8 @@ export default function ChatView() {
   const [chips, setChips] = useState<QuickReply[]>([]);
   const [mode, setMode] = useState<"ai" | "guided">("ai");
   const [handoff, setHandoff] = useState(false);
+  const [profile, setProfile] = useState<AdvisorProfileView | null>(null);
+  const [missing, setMissing] = useState<string[] | undefined>();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -34,7 +39,8 @@ export default function ChatView() {
 
   const lastRecId = useRef(0);
   const nextId = useRef(1);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Restore the chat when the customer comes back from /quote.
   useEffect(() => {
@@ -43,6 +49,7 @@ export default function ChatView() {
       /* eslint-disable react-hooks/set-state-in-effect -- restoring saved browser state on load */
       setChatLang(saved.lang); setSessionId(saved.sessionId); setMessages(saved.messages);
       setChips(saved.quickReplies); setMode(saved.mode); setHandoff(saved.handoff);
+      setProfile(saved.profile ?? null); setMissing(saved.missingSlots);
       /* eslint-enable react-hooks/set-state-in-effect */
       nextId.current = Math.max(0, ...saved.messages.map((m) => m.id)) + 1;
       lastRecId.current = Math.max(0, ...saved.messages.map((m) => m.rec?.id ?? 0));
@@ -53,9 +60,12 @@ export default function ChatView() {
   // Save after every change, and keep the newest message in view.
   useEffect(() => {
     if (!ready || !chatLang || !sessionId) return;
-    saveChat({ sessionId, lang: chatLang, messages, quickReplies: chips, mode, handoff });
-  }, [ready, chatLang, sessionId, messages, chips, mode, handoff]);
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy, chips]);
+    saveChat({ sessionId, lang: chatLang, messages, quickReplies: chips, mode, handoff, profile, missingSlots: missing });
+  }, [ready, chatLang, sessionId, messages, chips, mode, handoff, profile, missing]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, busy, chips]);
 
   const friendlyError = useCallback((e: unknown) => {
     if (e instanceof BackendDownError) return t("server_down");
@@ -72,6 +82,8 @@ export default function ChatView() {
     setChips(r.quickReplies);
     setMode(r.mode);
     setHandoff(!!r.handoff);
+    setProfile(r.profile ?? null);
+    setMissing(r.missingSlots);
   }
 
   async function pickLanguage(code: ChatLang) {
@@ -99,6 +111,7 @@ export default function ChatView() {
       setError(friendlyError(e));
     }
     setBusy(false);
+    inputRef.current?.focus({ preventScroll: true });
   }
 
   function buy(rec: Recommendation) {
@@ -111,93 +124,133 @@ export default function ChatView() {
   function restart() {
     clearChat();
     setChatLang(null); setSessionId(undefined); setMessages([]); setChips([]); setMode("ai");
-    setHandoff(false); setError(""); lastRecId.current = 0;
+    setHandoff(false); setError(""); setProfile(null); setMissing(undefined); lastRecId.current = 0;
   }
 
-  // ---------- Language picker ----------
+  // ---------- Landing + language picker ----------
   if (!ready) return <><Header /><main className="flex-1" /></>;
-  if (!chatLang) {
+  if (!chatLang || messages.length === 0) {
     return (
       <>
         <Header />
-        <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6">
-          <h1 className="text-2xl font-bold">{t("adv_pick_title")}</h1>
-          <p className="mt-1 text-gray-600">{t("adv_pick_sub")}</p>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            {CHAT_LANGUAGES.map((l) => (
-              <button key={l.code} onClick={() => pickLanguage(l.code)} disabled={busy}
-                className="min-h-14 rounded-xl border border-gray-300 bg-white px-3 text-lg font-semibold shadow-sm active:border-brand active:bg-brand-soft disabled:opacity-50">
-                {l.label}
-              </button>
-            ))}
-          </div>
-          {error && <p role="alert" className="mt-4 rounded-xl bg-brand-soft p-3 text-sm text-brand-dark">{error}</p>}
-          <p className="mt-6 text-center text-sm"><Link href="/form" className="font-semibold text-brand underline">{t("adv_form_link")}</Link></p>
-        </main>
+        <Landing busy={busy} error={error} onPick={pickLanguage} />
       </>
     );
   }
 
   // ---------- Chat ----------
   const speech = CHAT_LANGUAGES.find((l) => l.code === chatLang)?.speech ?? "en-IN";
+  const langLabel = CHAT_LANGUAGES.find((l) => l.code === chatLang)?.label ?? "";
+  const hasPlan = messages.some((m) => m.rec);
+
   return (
     <div className="flex h-dvh flex-col">
       <Header />
-      <main className="mx-auto w-full max-w-2xl flex-1 space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
-        {messages.map((m) => (
-          <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-            <div className={m.role === "user" ? "max-w-[85%]" : "w-full max-w-[95%]"}>
-              <p className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
-                m.role === "user" ? "rounded-br-sm bg-brand text-white" : "rounded-bl-sm bg-white shadow-sm"}`}>
-                {m.text}
+      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 gap-6 lg:px-6 lg:py-5">
+        {/* Chat panel */}
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white lg:rounded-3xl lg:shadow-[var(--shadow-card)] lg:ring-1 lg:ring-line" aria-label={t("adv_title")}>
+          {/* Advisor bar */}
+          <div className="flex items-center gap-3 border-b border-line px-4 py-2.5 sm:px-5">
+            <span className="relative">
+              <BrandMark size={38} />
+              <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white ${mode === "guided" ? "bg-amber-400" : "bg-ok"}`} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-[15px] font-bold text-ink">{t("adv_title")}</p>
+              <p className="truncate text-xs text-muted">
+                {mode === "guided" ? t("adv_status_simple") : t("adv_status_online")} · {langLabel}
               </p>
-              {m.rec && <RecommendationCard rec={m.rec} onBuy={() => buy(m.rec!)} />}
             </div>
+            <button onClick={() => setPersonOpen(true)} disabled={!sessionId}
+              className="flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-ink-2 ring-1 ring-line hover:bg-surface-2 lg:hidden"
+              aria-label={t("adv_person")}>
+              <Icon name="headset" size={18} /><span className="hidden sm:inline">{t("adv_person_short")}</span>
+            </button>
+            <button onClick={restart} className="grid h-10 w-10 place-items-center rounded-full text-ink-2 ring-1 ring-line hover:bg-surface-2"
+              aria-label={t("adv_new_chat")} title={t("adv_new_chat")}>
+              <Icon name="refresh" size={18} />
+            </button>
           </div>
-        ))}
-        {busy && (
-          <div className="flex justify-start" role="status" aria-label={t("adv_typing")}>
-            <div className="flex gap-1 rounded-2xl rounded-bl-sm bg-white px-4 py-3 shadow-sm">
-              {[0, 150, 300].map((d) => <span key={d} className="h-2 w-2 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: `${d}ms` }} />)}
-            </div>
-          </div>
-        )}
-        {error && (
-          <p role="alert" className="rounded-xl bg-brand-soft p-3 text-sm text-brand-dark">{error}</p>
-        )}
-        <div ref={bottom} />
-      </main>
+          <ProgressStrip profile={profile} missing={missing} hasPlan={hasPlan} />
 
-      <footer className="border-t border-gray-200 bg-white">
-        <div className="mx-auto w-full max-w-2xl px-4 pb-2 pt-2">
-          {mode === "guided" && <p className="mb-1 text-xs text-amber-800">{t("adv_guided_note")}</p>}
-          {chips.length > 0 && !busy && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {chips.map((c) => (
-                <button key={c.label} onClick={() => send(c.value)}
-                  className="min-h-11 rounded-full border border-brand px-4 text-sm font-medium text-brand-dark active:bg-brand-soft">
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          )}
-          <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); send(input); }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} maxLength={1000} disabled={busy}
-              placeholder={t("adv_placeholder")} aria-label={t("adv_placeholder")}
-              className="min-h-12 min-w-0 flex-1 rounded-full border border-gray-300 px-4 text-base" />
-            <MicButton speechLang={speech} onText={(txt) => setInput((v) => (v ? v + " " : "") + txt)} disabled={busy} />
-            <button type="submit" disabled={busy || !input.trim()}
-              className="min-h-12 shrink-0 rounded-full bg-brand px-5 font-semibold text-white disabled:opacity-40">{t("adv_send")}</button>
-          </form>
-          <p className="mt-1.5 text-center text-[11px] text-gray-500">{t("adv_notice")}</p>
-          <div className="flex flex-wrap items-center justify-between gap-x-4 text-xs">
-            <button onClick={() => setPersonOpen(true)} className="min-h-11 font-semibold text-brand underline">{t("adv_person")}</button>
-            <Link href="/form" className="flex min-h-11 items-center text-gray-600 underline">{t("adv_form_link")}</Link>
-            <button onClick={restart} className="min-h-11 text-gray-500 underline">{t("adv_new_chat")}</button>
+          {/* Messages */}
+          <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-surface-2 px-3 py-5 sm:px-6" aria-live="polite">
+            {mode === "guided" && (
+              <p className="mx-auto flex max-w-md items-center justify-center gap-1.5 rounded-full bg-warn-soft px-3 py-1.5 text-center text-xs font-medium text-warn">
+                <Icon name="info" size={14} className="shrink-0" /> {t("adv_guided_note")}
+              </p>
+            )}
+            {messages.map((m) => m.role === "user" ? (
+              <div key={m.id} className="flex animate-rise justify-end">
+                <p className="max-w-[82%] whitespace-pre-wrap rounded-3xl rounded-br-md bg-brand px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-sm">
+                  {m.text}
+                </p>
+              </div>
+            ) : (
+              <div key={m.id} className="flex animate-rise items-end gap-2">
+                <span className="mb-0.5 hidden shrink-0 self-start sm:block"><BrandMark size={28} /></span>
+                <div className="min-w-0 max-w-[92%] sm:max-w-[80%]">
+                  <p className="whitespace-pre-wrap rounded-3xl rounded-tl-md bg-white px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-sm ring-1 ring-line">
+                    {m.text}
+                  </p>
+                  {m.rec && <RecommendationCard rec={m.rec} onBuy={() => buy(m.rec!)} />}
+                </div>
+              </div>
+            ))}
+            {busy && (
+              <div className="flex items-end gap-2" role="status" aria-label={t("adv_typing")}>
+                <span className="hidden sm:block"><BrandMark size={28} /></span>
+                <div className="flex gap-1 rounded-3xl rounded-tl-md bg-white px-4 py-3.5 shadow-sm ring-1 ring-line">
+                  {[0, 150, 300].map((d) => <span key={d} className="h-2 w-2 animate-bounce rounded-full bg-muted/60" style={{ animationDelay: `${d}ms` }} />)}
+                </div>
+              </div>
+            )}
+            {handoff && (
+              <p className="mx-auto flex max-w-md items-center gap-2 rounded-2xl bg-info-soft px-4 py-3 text-sm text-info">
+                <Icon name="headset" size={18} className="shrink-0" /> {t("adv_person_done")}
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="mx-auto flex max-w-md items-center gap-2 rounded-2xl bg-brand-soft px-4 py-3 text-sm text-brand-dark">
+                <Icon name="info" size={18} className="shrink-0" /> {error}
+              </p>
+            )}
           </div>
-          {handoff && <p className="pb-1 text-center text-xs text-gray-600">{t("adv_person_done")}</p>}
+
+          {/* Composer */}
+          <div className="border-t border-line bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-5">
+            {chips.length > 0 && !busy && (
+              <div className="no-scrollbar -mx-3 mb-2.5 flex gap-2 overflow-x-auto px-3 sm:mx-0 sm:flex-wrap sm:px-0">
+                {chips.map((c) => (
+                  <button key={c.label} onClick={() => send(c.value)}
+                    className="h-10 shrink-0 rounded-full bg-white px-4 text-sm font-semibold text-ink ring-1 ring-line transition-colors hover:bg-brand-soft hover:text-brand-dark hover:ring-brand-ring">
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <form className="flex items-center gap-1.5 rounded-full bg-surface-2 p-1.5 ring-1 ring-line focus-within:ring-2 focus-within:ring-brand-ring"
+              onSubmit={(e) => { e.preventDefault(); send(input); }}>
+              <input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} maxLength={1000} disabled={busy}
+                placeholder={t("adv_placeholder")} aria-label={t("adv_placeholder")}
+                className="h-11 min-w-0 flex-1 bg-transparent pl-3 text-base text-ink outline-none placeholder:text-muted focus-visible:outline-none" />
+              <MicButton speechLang={speech} onText={(txt) => setInput((v) => (v ? v + " " : "") + txt)} disabled={busy} />
+              <button type="submit" disabled={busy || !input.trim()} aria-label={t("adv_send")}
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-white transition-colors hover:bg-brand-dark disabled:bg-line disabled:text-muted">
+                <Icon name="send" size={19} />
+              </button>
+            </form>
+            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-muted">
+              <span className="flex min-w-0 items-center gap-1"><Icon name="lock" size={12} className="shrink-0" /><span className="truncate">{t("adv_notice")}</span></span>
+              <Link href="/form" className="shrink-0 font-semibold text-ink-2 underline-offset-2 hover:underline">{t("adv_form_short")}</Link>
+            </div>
+          </div>
+        </section>
+
+        <div className="w-80 shrink-0 max-lg:hidden">
+          <BusinessPanel profile={profile} missing={missing} hasPlan={hasPlan} onPerson={() => setPersonOpen(true)} />
         </div>
-      </footer>
+      </div>
 
       {personOpen && sessionId && <PersonDialog sessionId={sessionId} onClose={() => setPersonOpen(false)} />}
     </div>

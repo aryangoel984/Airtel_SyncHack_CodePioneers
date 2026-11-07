@@ -10,10 +10,10 @@
 ## Roadmap
 1. **Foundation** (data + rules + lookup APIs) <- done
 2. **Quote screen** <- done
-3. **AI Advisor** <- done (see docs/advisor-eval.md for the live evaluation)
-4. Smart KYC
-5. Tracker
-6. Back-office dashboard + submission
+3. **AI Advisor** <- done (see docs/advisor-eval.md for the live evaluation). 3.5: blocked wishes always explained <- done
+4. **Smart KYC** <- done
+5. **Tracker** <- done
+6. Back-office dashboard + lead score, then submission (deploy, architecture diagram, 10-slide case, privacy note, video)
 
 ## From the full problem statement (docs/PROBLEM_STATEMENT.md)
 - Goal: a digital-first journey to discover the right bundle, buy it and get it activated with minimal human effort, on a phone, in the owner's language.
@@ -72,21 +72,45 @@
 - **Frontend:** `/` is the advisor (language picker with 11 languages in their own scripts, chat, quick-reply chips, typing dots, plan card, "Customise & buy" -> `/quote` with the exact items, "Talk to a person", mic button via the Web Speech API, hidden when unsupported). Old form is at `/form`. Screen text is English or Hindi; the chat itself is in the customer's language. Plan-card product names exist only in English/Hindi (the LLM may not write product names).
 - **Evaluation:** `npm run eval:advisor` (live, real Groq, not part of `npm test`; `-- --only=3,7` to re-run some, `-- --fresh` to start over). Results: `docs/advisor-eval.md` (table + transcripts) and `docs/advisor-eval.json`. Unit tests use a mocked Groq (`backend/tests/advisor/`).
 
+## Step 3.5: blocked wishes are always explained
+- Eval scenario 2 failed live: a no-GST shop asked for WhatsApp Business and the AI skipped the "needs GST" reason.
+- Fix (`advisor/engine.ts`): when a NEW wish arrives and all details are known, code rebuilds the plan immediately and tells the AI (server note) what is blocked and why. After the reply, `ensureBlockedExplained()` appends the reason from the rules engine if the reply doesn't mention it. Works in AI and guided mode. Tests: `tests/advisor/blocked-wish.test.ts`.
+
+## Step 4: Smart KYC
+- **Flow:** `/kyc/[orderId]`: consent -> documents -> checks -> e-sign. Backend `src/lib/kyc/` (types, ocr, parse, checks, service) + `src/routes/kyc.ts`.
+- **OCR:** Tesseract (`tesseract.js` + `@tesseract.js-data/eng`, runs on our server, offline, never an outside AI). `sharp` cleans the image and sets 300 DPI metadata (without it the auto-rotation fails and the tilted K02 can't be read). `rotateAuto` straightens tilted photos. Confidence < 60 = unreadable (blurry). ~0.8 s per document; one OCR at a time (queue).
+- **Parsing (`parse.ts`):** label/value lines (same line or the next line for ID cards); GSTIN fixed by position (O/0, I/1...) then, if the check digit fails, ONE look-alike swap is accepted only if the result passes the checksum AND is in the registry (K10 I->J). A tampered GSTIN (K06) is never "fixed". Names/addresses compared with `sameText` (edit distance <= max(2, 5%)).
+- **Checks (`checks.ts`), each with EN/HI text:** missing documents; unreadable; GSTIN check digit (reject); in registry (reject); GST status Active (reject if Cancelled/Suspended); legal + trade name and address vs registry (fix); typed GSTIN vs certificate; Udyam number present / format / registry / name; GST vs Udyam name; signatory ID valid date, issued for this business, owner check for proprietorships (warn); bill within 90 days of TODAY, bill name, bill address vs registry. Verdict: any reject -> REJECTED; any other fail -> ACTION_NEEDED; else VERIFIED. Udyam registration dates and "major activity" differ on every sample certificate (data noise), so they are NOT checked.
+- **Required documents:** signatory ID + address proof always; GST certificate unless "I don't have GST"; Udyam certificate unless "I don't have Udyam"; at least one registration; if the plan has GST-only products, GST is required.
+- **Sample answer key (`tests/kyc.test.ts`, real OCR):** K01 REJECTED (GST cancelled + Udyam number blank), K02 VERIFIED (tilted), K03 VERIFIED, K04 ACTION_NEEDED (blurry GST), K05 ACTION_NEEDED (no Udyam), K06 REJECTED (altered GSTIN), K07 ACTION_NEEDED (name mismatch), K08-K10 VERIFIED, K11 ACTION_NEEDED (bill too old), K12 VERIFIED.
+- **Order statuses:** QUOTE_ACCEPTED -> KYC_ACTION_NEEDED / KYC_REJECTED -> KYC_VERIFIED (only after e-sign) -> SITE_CHECK -> TECH_SCHEDULED -> INSTALLED -> ACTIVE. `updateOrder()` / `setStatus()` in `orders.ts` (one write queue, mock SMS per status).
+- **Privacy:** uploads stay in memory (multer memoryStorage, 8 MB, images only) and are discarded after OCR; the order keeps only the result with masked GSTIN/Udyam/ID numbers. Consent (time, version, language) is stored. Max 5 attempts; verify endpoint rate-limited.
+- **Mocks:** DigiLocker button = demo loader for the 12 sample applicants (`backend/data/kyc_samples/`, served by `GET /api/kyc/samples/:id/:doc`). e-sign = 6-digit OTP shown on screen ("sent" to the masked mobile), 10-minute expiry.
+
+## Step 5: Tracker
+- `/order/[id]` is the live tracker: status hero with progress bar, 6-stage timeline (done / current / attention / blocked / upcoming) with real or expected dates, KYC call-to-action, mock SMS list, order summary. `/track`: find an order with order number + mobile (must match, rate-limited).
+- Timeline maths (`src/lib/tracker.ts`): after verification, site check +1 day, technician +1-2 days, installed and live after the plan's install days.
+- **Demo control:** "Move installation to the next step" button (`POST /api/orders/:id/advance`) for presentations; only after KYC_VERIFIED. Turn off with `DEMO_CONTROLS=false` in `backend/.env`.
+
 ## Folder structure
 ```
 backend/                 Express + TypeScript API, port 4000
   data/                  4 CSVs (+ orders.json at runtime, git-ignored)
   src/server.ts          app, CORS (localhost:3000 only), error handler, /api/health
   src/lib/advisor/       AI Advisor (see Step 3 section)
+  src/lib/kyc/           Smart KYC: ocr, parse, checks, service, types (Step 4)
+  src/lib/tracker.ts     tracker timeline + demo advance (Step 5)
+  data/kyc_samples/      the 12 sample applicants' documents (K01-K12)
   scripts/evalAdvisor.ts live advisor evaluation
   src/lib/               data, validators, mask, lookups, rules, quote, segments,
                          quantities + quantityConfig (history-based default quantities),
                          productCopy (EN/HI text), starter, orders, validate (input checks)
-  src/routes/            gstin, udyam, catalogue, eligible, quote, bundles, orders
+  src/routes/            gstin, udyam, catalogue, eligible, quote, bundles, orders, advisor, kyc
   tests/                 validators, rules+quote, historic-leads, starter, orders, iqr, advisor/*
 frontend/                Next.js + Tailwind, port 3000 (no business logic)
-  app/                   page.tsx (AI Advisor chat), form/ (old start form), quote/, order/[id]/, dev/ (API test page)
-  components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView, chat/ (ChatView, RecommendationCard, PersonDialog, MicButton)
+  app/                   page.tsx (AI Advisor chat), form/, quote/, order/[id]/ (tracker), kyc/[id]/, track/, dev/ (API test page)
+  components/            Header, ProductRow, ConfirmDialog, ErrorBox, OrderView (tracker), ui/ (Icon, JourneySteps, Sheet),
+                         chat/ (ChatView, Landing, BusinessPanel, RecommendationCard, PersonDialog, MicButton), kyc/ (KycView, UploadStep, ResultsStep)
   lib/                   api.ts (backend client), types.ts, i18n.ts (EN/HI strings), LangContext, profile
 docs/PROBLEM_STATEMENT.md
 ```
@@ -96,7 +120,8 @@ docs/PROBLEM_STATEMENT.md
 - `POST /api/eligible` body = profile
 - `POST /api/bundles/starter` body = profile -> `{ based_on, base, addons, more, blocked, fixes }`
 - `POST /api/quote` body = `{ profile, items: [{product_id, quantity}] }`
-- `POST /api/orders` body = `{ profile, items, language, mobile }`; `GET /api/orders/:id`
+- `POST /api/orders` body = `{ profile, items, language, mobile }`; `GET /api/orders/:id` (includes `tracker`, `kyc`, `notifications`); `POST /api/orders/track {orderId, mobile}`; `POST /api/orders/:id/advance` (demo)
+- KYC: `GET /api/kyc/samples`, `GET /api/kyc/samples/:id/:doc`, `GET /api/kyc/:orderId`, `POST /api/kyc/:orderId/consent {accepted, language}`, `POST /api/kyc/:orderId/digilocker`, `POST /api/kyc/:orderId/verify` (multipart: gst_certificate, udyam_certificate, signatory_id, address_proof, noGst, noUdyam, gstin), `POST /api/kyc/:orderId/esign/start`, `POST /api/kyc/:orderId/esign/confirm {name, otp}`
 - Advisor: `POST /api/advisor/start {language}`, `POST /api/advisor/chat {sessionId?, message, language?}`, `GET /api/advisor/session/:id`, `POST /api/advisor/session/:id/event {quote_opened|ordered}`, `POST /api/advisor/callback {sessionId, mobile}`, `POST /api/advisor/handoff {sessionId}`
 - Profile = `{ segment, city_tier, employee_count, num_sites, has_valid_active_gstin }`; segment = `micro | prof | multi | mfg`
 
@@ -104,7 +129,7 @@ docs/PROBLEM_STATEMENT.md
 ```
 npm run install:all
 npm run dev      # backend :4000 + frontend :3000
-npm test         # backend Vitest + supertest (102 tests; prints the historic-bundle count)
+npm test         # backend Vitest + supertest (129 tests, about 1 minute: includes real OCR on the 12 KYC samples)
 npm run eval:advisor --prefix backend   # live advisor evaluation (needs GROQ_API_KEY in backend/.env)
 ```
 Backend env: `backend/.env.example`. Frontend env: `frontend/.env.example` (`NEXT_PUBLIC_API_URL`).

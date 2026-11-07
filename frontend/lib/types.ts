@@ -110,6 +110,20 @@ export interface Quote {
 }
 
 // ---- Orders: POST /api/orders, GET /api/orders/:id ----
+export type OrderStatus =
+  | "QUOTE_ACCEPTED" | "KYC_ACTION_NEEDED" | "KYC_REJECTED" | "KYC_VERIFIED"
+  | "SITE_CHECK" | "TECH_SCHEDULED" | "INSTALLED" | "ACTIVE";
+
+export interface OrderNotification { at: string; channel: "SMS" | "WhatsApp"; status: OrderStatus; text_en: string; text_hi: string }
+
+export interface StageView {
+  key: "QUOTE_ACCEPTED" | "KYC_VERIFIED" | "SITE_CHECK" | "TECH_SCHEDULED" | "INSTALLED" | "ACTIVE";
+  state: "done" | "current" | "attention" | "blocked" | "upcoming";
+  at: string | null;
+  expected: string | null; // YYYY-MM-DD
+}
+export interface TrackerView { stages: StageView[]; progress: number; expected_live: string; canAdvance: boolean }
+
 export interface Order {
   id: string;
   createdAt: string;
@@ -118,9 +132,36 @@ export interface Order {
   profile: BusinessProfile;
   items: BundleItem[];
   quote: Quote;
-  status: string;
-  statusHistory: { status: string; at: string; note?: string }[];
+  status: OrderStatus;
+  statusHistory: { status: OrderStatus; at: string; note?: string }[];
+  kyc: KycPublic;
+  tracker: TrackerView;
+  notifications?: OrderNotification[];
 }
+
+// ---- Smart KYC: /api/kyc/* (mirrors backend/src/lib/kyc/types.ts) ----
+export type DocType = "gst_certificate" | "udyam_certificate" | "signatory_id" | "address_proof";
+export interface KycCheck { code: string; doc: DocType | "overall"; result: "pass" | "fail" | "warn"; severity?: "reject" | "fix"; en: string; hi: string }
+export interface DocSummary { doc: DocType; provided: boolean; readable: boolean; confidence: number | null; rotated: boolean; fields: Record<string, string> }
+export type KycVerdict = "VERIFIED" | "ACTION_NEEDED" | "REJECTED";
+export interface KycResult {
+  verdict: KycVerdict;
+  checkedAt: string;
+  business: { name: string | null; source: "gst" | "udyam" | null; gstin_masked: string | null; udyam_masked: string | null; gst_status: string | null };
+  docs: DocSummary[];
+  checks: KycCheck[];
+  ocrMs: number;
+}
+export interface KycPublic {
+  attempts: number;
+  consent?: { accepted: true; at: string; version: string; language: Lang };
+  result?: KycResult;
+  digilocker?: { at: string };
+  esign?: { at: string; name: string; otpSentTo: string };
+  otpPending?: boolean;
+}
+export interface KycState { orderId: string; status: OrderStatus; kyc: KycPublic }
+export interface KycSample { id: string; business: string; docs: DocType[] }
 
 // ---- AI Advisor: /api/advisor/* (mirrors backend/src/lib/advisor/*) ----
 export type ChatLang = "en" | "hi" | "hinglish" | "mr" | "ta" | "te" | "kn" | "gu" | "bn" | "pa" | "ml";

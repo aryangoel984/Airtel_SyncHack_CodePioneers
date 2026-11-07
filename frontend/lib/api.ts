@@ -1,6 +1,6 @@
 // One small typed client for every backend call. Base URL comes from NEXT_PUBLIC_API_URL.
 import type {
-  BundleItem, BusinessProfile, ChatLang, ChatResponse, EligibleProduct, GstinLookup, Lang, Order, Quote, StarterResponse,
+  BundleItem, BusinessProfile, ChatLang, ChatResponse, DocType, EligibleProduct, GstinLookup, KycSample, KycState, Lang, Order, Quote, StarterResponse,
 } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -17,9 +17,10 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit, allowErrorBody = false): Promise<T> {
   let res: Response;
   try {
+    const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData; // file uploads set their own header
     res = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: isForm ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
     });
   } catch {
     throw new BackendDownError("Cannot reach the server");
@@ -44,6 +45,28 @@ export const api = {
   createOrder: (b: { profile: BusinessProfile; items: BundleItem[]; language: Lang; mobile: string }) =>
     request<Order>("/api/orders", post(b)),
   getOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}`),
+  advanceOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}/advance`, { method: "POST" }),
+  trackOrder: (orderId: string, mobile: string) => request<{ id: string }>("/api/orders/track", post({ orderId, mobile })),
+
+  // ---- Smart KYC ----
+  kycConsent: (id: string, language: Lang) => request<KycState>(`/api/kyc/${encodeURIComponent(id)}/consent`, post({ accepted: true, language })),
+  kycDigilocker: (id: string) => request<KycState>(`/api/kyc/${encodeURIComponent(id)}/digilocker`, { method: "POST" }),
+  kycVerify: (id: string, files: Partial<Record<DocType, File>>, opts: { noGst: boolean; noUdyam: boolean; gstin?: string }) => {
+    const fd = new FormData();
+    for (const [k, f] of Object.entries(files)) if (f) fd.append(k, f);
+    fd.append("noGst", String(opts.noGst));
+    fd.append("noUdyam", String(opts.noUdyam));
+    if (opts.gstin) fd.append("gstin", opts.gstin);
+    return request<KycState>(`/api/kyc/${encodeURIComponent(id)}/verify`, { method: "POST", body: fd });
+  },
+  kycEsignStart: (id: string) => request<{ sentTo: string; demoOtp: string }>(`/api/kyc/${encodeURIComponent(id)}/esign/start`, { method: "POST" }),
+  kycEsignConfirm: (id: string, name: string, otp: string) => request<KycState>(`/api/kyc/${encodeURIComponent(id)}/esign/confirm`, post({ name, otp })),
+  kycSamples: () => request<KycSample[]>("/api/kyc/samples"),
+  kycSampleFile: async (sampleId: string, doc: DocType): Promise<File> => {
+    const res = await fetch(`${API_URL}/api/kyc/samples/${sampleId}/${doc}`);
+    if (!res.ok) throw new ApiError("Sample not found", res.status);
+    return new File([await res.blob()], `${sampleId}_${doc}.png`, { type: "image/png" });
+  },
 
   // ---- AI Advisor ----
   advisorStart: (language: ChatLang) => request<ChatResponse>("/api/advisor/start", post({ language })),

@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Pick the right internet, SIM and business tools in 2 minutes.",
 };
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#ffffff", viewportFit: "cover" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

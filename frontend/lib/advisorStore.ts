@@ -1,6 +1,6 @@
 // Browser-side memory for the advisor, in sessionStorage (cleared when the tab closes).
 // It keeps the conversation when the customer opens /quote and comes back. The server keeps no chat text.
-import type { BundleItem, ChatLang, QuickReply, Recommendation } from "./types";
+import type { AdvisorProfileView, BundleItem, ChatLang, QuickReply, Recommendation } from "./types";
 
 export interface ChatMessage {
   id: number;
@@ -16,6 +16,9 @@ export interface SavedChat {
   quickReplies: QuickReply[];
   mode: "ai" | "guided";
   handoff: boolean;
+  /** What the advisor has learned so far (masked), for the "Your business" panel */
+  profile?: AdvisorProfileView | null;
+  missingSlots?: string[];
 }
 
 const CHAT_KEY = "udyam_advisor_chat";
