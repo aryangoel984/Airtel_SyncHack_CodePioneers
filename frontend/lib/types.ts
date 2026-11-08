@@ -275,3 +275,12 @@ export interface ModelReport {
   thresholds: { high: number; medium: number };
   factors: { name: string; label: string; weight: number }[];
 }
+
+// ---- System status: GET /api/status (mirrors backend/src/routes/system.ts) ----
+export interface SystemStatus {
+  ok: boolean;
+  startedAt: string;
+  ai: { configured: boolean; backupKey: boolean; models: { primary: string; fallback: string }; state: "live" | "degraded" | "guided"; lastOkAt: string | null; usingBackupKey: boolean };
+  ocr: { ready: boolean };
+  demoControls: boolean;
+}

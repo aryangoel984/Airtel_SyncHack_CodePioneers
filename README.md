@@ -42,7 +42,9 @@ If the AI cannot close the deal (call request, big business, rejected or stuck K
 ## Key design choices
 
 - **"The AI talks, the code decides."** The LLM (Groq `openai/gpt-oss-120b`, falling back to `gpt-oss-20b`) only chats and calls our tools. Eligibility, prices, dependencies and plans all come from a deterministic rules engine. A guardrail checks every AI reply against the real plan before the owner sees it. A WhatsApp request without GST, a 1 Gbps request in a tier-2 city or a discount demand can never get through.
-- **Always works.** If the LLM is down or rate-limited, the chat switches to a guided mode that still produces a valid plan.
+- **Always works.** A backup Groq key (`GROQ_API_KEY_BACKUP`) takes over when the main key is rate-limited; if every model fails, the chat switches to a guided mode that still produces a valid plan.
+- **Details are never lost.** Code reads clear facts from each message itself ("2 staff", "one shop", "no GST", "budget 1000", the city and the business type), so even a busy or smaller model can't miss them. 100+ Indian cities are mapped to a tier.
+- **Voice both ways.** Speak instead of typing, and tap the speaker to hear replies read aloud in the chosen language (browser speech, on the device).
 - **Plans from real behaviour.** Starter bundles come from what similar customers in `smb_leads.csv` bought and kept for 6+ months.
 - **Smart KYC on our own server.** Tesseract OCR with image clean-up (tilted photos work) is followed by checks:
   - GSTIN checksum and registry status
@@ -71,7 +73,7 @@ If the AI cannot close the deal (call request, big business, rejected or stuck K
 - **Frontend:** Next.js 16 + TypeScript + Tailwind v4, mobile-first, deployed on **Vercel**.
 - **Backend:** Express 5 + TypeScript (tsx), deployed on **Render**, with a keep-alive ping to `/api/health` every 10 minutes.
 - **AI:** Groq SDK with tool calling. **OCR:** tesseract.js + sharp.
-- **Tests:** Vitest + supertest, 140 backend tests (the LLM is mocked). Live advisor evaluation is in [`docs/advisor-eval.md`](docs/advisor-eval.md).
+- **Tests:** Vitest + supertest, 169 backend tests (the LLM is mocked). Live advisor evaluation is in [`docs/advisor-eval.md`](docs/advisor-eval.md).
 - **Storage:** the hackathon CSVs (read-only) and JSON files for orders, call requests and back-office notes. Production would use PostgreSQL plus the real GSTN, Udyam, DigiLocker, Aadhaar e-Sign and SMS services.
 
 ## Try it (demo script)
@@ -84,7 +86,7 @@ If the AI cannot close the deal (call request, big business, rejected or stuck K
    - **K11:** Fix needed (old electricity bill)
    - **K06:** Rejected (fake GSTIN)
 5. For a verified applicant, finish e-sign with the demo code shown on screen. Then use **"Move installation to the next step"** (demo control) on the tracker to reach *All services are live*.
-6. Open **/backoffice** with PIN `2468` to see the ranked call queue, routing, the funnel and the win-back list.
+6. Open **/backoffice** with PIN `2468` to see the ranked call queue, routing, the funnel and the win-back list. The status chips show whether the AI and the document reader are ready; **Reset demo** clears test orders before a presentation.
 
 ## Run locally
 
@@ -102,6 +104,7 @@ npm run eval:advisor --prefix backend   # live advisor evaluation against Groq
 |---|---|---|
 | backend | `GROQ_API_KEY` | LLM key (server only) |
 | backend | `GROQ_MODEL`, `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-120b`, `openai/gpt-oss-20b` |
+| backend | `GROQ_API_KEY_BACKUP` | optional second key, used when the first is rate-limited |
 | backend | `CORS_ORIGIN` | the frontend URL allowed to call the API |
 | backend | `BACKOFFICE_PIN` | staff PIN (demo default `2468`) |
 | backend | `DEMO_CONTROLS` | `true` shows the demo "next installation step" button |

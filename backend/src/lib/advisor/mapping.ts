@@ -20,6 +20,48 @@ const CITY_ALIASES: Record<string, string> = {
   विशाखापत्तनम: "Visakhapatnam", vishakhapatnam: "Visakhapatnam",
 };
 
+
+/**
+ * Cities that are not in smb_leads.csv. The dataset's tier 1 is the 8 big metros; we treat their satellite
+ * cities (same metro area, same fibre network) as tier 1 too, and every other city as tier 2. Assumption, stated in CLAUDE.md.
+ */
+const METRO_AREA: Record<string, string> = {
+  gurugram: "Gurugram", gurgaon: "Gurugram", गुरुग्राम: "Gurugram", गुड़गांव: "Gurugram", noida: "Noida", नोएडा: "Noida",
+  "greater noida": "Greater Noida", ghaziabad: "Ghaziabad", गाज़ियाबाद: "Ghaziabad", गाजियाबाद: "Ghaziabad",
+  faridabad: "Faridabad", फरीदाबाद: "Faridabad", thane: "Thane", ठाणे: "Thane", "navi mumbai": "Navi Mumbai",
+  secunderabad: "Secunderabad", howrah: "Howrah", "new town": "Kolkata", "pimpri chinchwad": "Pimpri-Chinchwad", "pimpri-chinchwad": "Pimpri-Chinchwad",
+};
+const OTHER_CITIES = [
+  "Agra", "Meerut", "Kanpur", "Varanasi", "Prayagraj", "Allahabad", "Gorakhpur", "Bareilly", "Aligarh", "Moradabad", "Saharanpur", "Jhansi",
+  "Chandigarh", "Mohali", "Amritsar", "Jalandhar", "Patiala", "Dehradun", "Haridwar", "Shimla", "Jammu", "Srinagar",
+  "Jodhpur", "Udaipur", "Kota", "Ajmer", "Bikaner", "Raipur", "Bilaspur", "Ranchi", "Jamshedpur", "Dhanbad", "Bhubaneswar", "Cuttack",
+  "Guwahati", "Siliguri", "Durgapur", "Asansol", "Gwalior", "Jabalpur", "Ujjain", "Rajkot", "Bhavnagar", "Jamnagar", "Gandhinagar", "Anand",
+  "Aurangabad", "Chhatrapati Sambhajinagar", "Solapur", "Kolhapur", "Sangli", "Amravati", "Thiruvananthapuram", "Trivandrum", "Kozhikode", "Calicut",
+  "Thrissur", "Madurai", "Tiruchirappalli", "Trichy", "Salem", "Tiruppur", "Vellore", "Mangaluru", "Mangalore", "Hubballi", "Hubli", "Belagavi", "Belgaum",
+  "Vijayawada", "Guntur", "Nellore", "Tirupati", "Warangal", "Goa", "Panaji", "Puducherry", "Pondicherry", "Gaya", "Muzaffarpur", "Bhagalpur",
+];
+const OTHER_HINDI: Record<string, string> = {
+  आगरा: "Agra", मेरठ: "Meerut", कानपुर: "Kanpur", वाराणसी: "Varanasi", बनारस: "Varanasi", प्रयागराज: "Prayagraj", इलाहाबाद: "Prayagraj",
+  गोरखपुर: "Gorakhpur", बरेली: "Bareilly", अलीगढ़: "Aligarh", चंडीगढ़: "Chandigarh", अमृतसर: "Amritsar", देहरादून: "Dehradun", जोधपुर: "Jodhpur",
+  उदयपुर: "Udaipur", कोटा: "Kota", अजमेर: "Ajmer", रायपुर: "Raipur", रांची: "Ranchi", ग्वालियर: "Gwalior", जबलपुर: "Jabalpur", राजकोट: "Rajkot",
+  औरंगाबाद: "Aurangabad", कोल्हापुर: "Kolhapur", सोलापुर: "Solapur",
+};
+const OTHER_BY_KEY = new Map<string, string>([
+  ...OTHER_CITIES.map((c) => [c.toLowerCase(), c] as [string, string]), ...Object.entries(OTHER_HINDI),
+  ["banaras", "Varanasi"], ["allahabad", "Prayagraj"], ["trivandrum", "Thiruvananthapuram"], ["calicut", "Kozhikode"], ["trichy", "Tiruchirappalli"],
+  ["mangalore", "Mangaluru"], ["hubli", "Hubballi"], ["belgaum", "Belagavi"], ["pondicherry", "Puducherry"],
+]);
+
+/** Known cities outside the dataset: metro-area satellites are tier 1, the rest tier 2. */
+function lookupExtraCity(raw: string): { city: string; tier: number } | null {
+  const inText = (k: string) => raw === k || new RegExp(`(^|[^a-z\\p{L}])${k}([^a-z\\p{L}]|$)`, "iu").test(raw);
+  const metro = Object.keys(METRO_AREA).sort((a, b) => b.length - a.length).find(inText);
+  if (metro) return { city: METRO_AREA[metro], tier: 1 };
+  const other = [...OTHER_BY_KEY.keys()].sort((a, b) => b.length - a.length).find(inText);
+  if (other) return { city: OTHER_BY_KEY.get(other)!, tier: 2 };
+  return null;
+}
+
 let _cityTier: Map<string, number> | null = null;
 /** City -> tier table, built from smb_leads.csv. */
 function cityTierTable(): Map<string, number> {
@@ -45,7 +87,7 @@ export function lookupCity(text: string): { city: string; tier: number } | null 
     const exact = [...table.keys()].find((c) => c.toLowerCase() === raw);
     if (exact) canonical = exact;
   }
-  if (!canonical) return null;
+  if (!canonical) return lookupExtraCity(raw);
   const tier = table.get(canonical);
   return tier ? { city: canonical, tier } : null;
 }
@@ -77,8 +119,9 @@ function typeTable() {
 const TYPE_KEYWORDS: [SegCode, RegExp][] = [
   ["multi", /(chain|outlets?|franchise|branches|आउटलेट|चेन)/i],
   ["mfg", /(factory|factories|manufactur|workshop|\bunit\b|textile|mill|फैक्ट्री|फैक्टरी|कारखाना|वर्कशॉप)/i],
-  ["prof", /(clinic|doctor|dentist|hospital|diagnostic|\blab\b|\bca\b|chartered|accountant|lawyer|advocate|\blaw\b|coaching|tuition|classes|architect|insurance|real estate|travel|physio|consultant|\boffice\b|agency|studio|क्लिनिक|डॉक्टर|वकील|कोचिंग|ऑफिस|ऑफ़िस)/i],
-  ["micro", /(kirana|किराना|grocery|general store|provision|salon|parlou?r|beauty|barber|सैलून|पार्लर|chemist|medical|pharmacy|फार्मेसी|मेडिकल|bakery|sweet|mithai|मिठाई|stationery|boutique|tailor|optician|hardware|repair|tea stall|dhaba|restaurant|cafe|\bhotel\b|\bshop\b|\bstore\b|dukaan|dukan|दुकान|स्टोर|retail)/i],
+  ["micro", /(chemist|medical (?:store|shop|hall)|pharmacy|फार्मेसी|मेडिकल (?:स्टोर|स्टोअर|दुकान)|दवा की दुकान)/i],
+  ["prof", /(clinic|doctor|dentist|hospital|diagnostic|\blab\b|\bca\b|chartered|accountant|lawyer|advocate|\blaw\b|coaching|tuition|classes|academy|school|institute|architect|insurance|real estate|travel|physio|consult|\bit\b|software|tech(?:nology)? (?:firm|company|services)|\bfirm\b|\boffice\b|agency|studio|क्लिनिक|डॉक्टर|वकील|कोचिंग|ऑफिस|ऑफ़िस)/i],
+  ["micro", /(kirana|किराना|மளிகை|grocery|general store|provision|salon|saloon|parlou?r|beauty|barber|सैलून|सलून|पार्लर|சலூன்|సెలూన్|ಸಲೂನ್|સલૂન|সেলুন|ਸੈਲੂਨ|സലൂൺ|chemist|medical|pharmacy|फार्मेसी|मेडिकल|bakery|sweet|mithai|मिठाई|stationery|boutique|tailor|optician|hardware|repair|tea stall|dhaba|restaurant|cafe|\bhotel\b|\bshop\b|\bstore\b|dukaan|dukan|दुकान|स्टोर|retail)/i],
 ];
 
 /** Free text -> segment code, or null if we can't tell (then the LLM may pass a `segment` hint). */
@@ -91,6 +134,26 @@ export function mapBusinessType(text: string): SegCode | null {
   const known = [...table.keys()].sort((a, b) => b.length - a.length).find((k) => t.includes(k));
   if (known) return table.get(known)!;
   for (const [seg, re] of TYPE_KEYWORDS) if (re.test(t)) return seg;
+  return null;
+}
+
+
+const TYPE_TAIL = /^(shop|store|stores|clinic|office|firm|company|centre|center|unit|chain|services|service|consultancy|consulting|agency|studio|parlou?r|salon|outlet|outlets|business|dukaan|dukan|दुकान|स्टोर|स्टोअर)$/i;
+
+/** The business type as the customer wrote it ("kirana shop", "dental clinic"), when a message clearly says it. */
+export function extractBusinessType(text: string): string | null {
+  const t = (text ?? "").toLowerCase();
+  const known = [...typeTable().keys()].sort((a, b) => b.length - a.length).find((k) => k.length > 3 && t.includes(k));
+  if (known) return known;
+  for (const [, re] of TYPE_KEYWORDS) {
+    const m = t.match(re);
+    if (!m) continue;
+    // widen "it" -> "it consultancy office", "kirana" -> "kirana shop" (at most 3 words, letters only)
+    const words = t.slice(m.index!).split(/[\s,.;!?।]+/).filter(Boolean);
+    const out = [words[0]];
+    for (const w of words.slice(1, 3)) { if (/^[\p{L}\p{M}]+$/u.test(w) && TYPE_TAIL.test(w)) out.push(w); else break; }
+    return out.join(" ");
+  }
   return null;
 }
 
@@ -288,3 +351,44 @@ export function parseCount(text: string): number | null {
 }
 
 export { getProduct, segmentName };
+
+// ---------------- Facts code can read from a message by itself ----------------
+// The LLM normally saves details with update_profile. These patterns catch the common, unambiguous phrasings
+// ("2 staff", "one shop", "no GST", "budget 1000") so a small or rate-limited model can't miss them.
+const NUM_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20,
+  single: 1, ek: 1, do: 2, teen: 3, char: 4, chaar: 4, paanch: 5, panch: 5, chhe: 6, che: 6, saat: 7, aath: 8, nau: 9, das: 10,
+  एक: 1, दो: 2, तीन: 3, चार: 4, पांच: 5, पाँच: 5, छह: 6, छः: 6, सात: 7, आठ: 8, नौ: 9, दस: 10, एकच: 1, दोन: 2,
+};
+const NUM = `(\\d+(?:\\s*(?:-|–|to|se|or|ya|या)\\s*\\d+)?|${Object.keys(NUM_WORDS).join("|")})`;
+const PEOPLE = "(?:staff|people|persons?|employees?|workers?|members?|teachers?|doctors?|log|logon|lög|लोग|लोगों|लोक|कर्मचारी|आदमी|बंदे|पேர்|பேர்|ఉద్యోగులు|ജീവനക്കാർ|জন|ਲੋਕ|લોકો)";
+const SITES = "(?:shops?|outlets?|branch(?:es)?|locations?|stores?|centres?|centers?|offices?|sites?|clinics?|factories|units?|dukaan(?:ein)?|dukan|दुकान(?:ें)?|दुकाने|शाखा(?:एं|ाएँ)?|आउटलेट|ठिकाने|கடை|ஷாப்)";
+
+function wordOrNumber(raw: string): number | null {
+  const w = NUM_WORDS[raw.toLowerCase()];
+  if (w) return w;
+  return parseCount(raw);
+}
+
+export interface MessageFacts { employee_count?: number; num_sites?: number; has_gstin?: boolean; budget_per_month?: number }
+
+export function extractFacts(text: string): MessageFacts {
+  const t = ` ${(text ?? "").replace(/\s+/g, " ")} `;
+  const out: MessageFacts = {};
+  const people = t.match(new RegExp(`(?:^|[^\\p{L}\\d])${NUM}\\s*\\+?\\s*${PEOPLE}(?=[^\\p{L}]|$)`, "iu"))
+    ?? t.match(new RegExp(`team of\\s+${NUM}`, "i"));
+  const negative = (m: RegExpMatchArray) => /(minus|negative|-)\s*$/i.test(t.slice(0, (m.index ?? 0) + m[0].indexOf(m[1])));
+  if (people && !negative(people)) { const n = wordOrNumber(people[1]); if (n && n <= 100000) out.employee_count = n; }
+  const sites = t.match(new RegExp(`(?:^|[^\\p{L}\\d])${NUM}\\s*${SITES}(?=[^\\p{L}]|$)`, "iu"));
+  if (sites && !negative(sites)) { const n = wordOrNumber(sites[1]); if (n && n <= 1000) out.num_sites = n; }
+  else if (/(only one|just one|single|ek hi|एक ही|एकच)\s+\p{L}*\s*(shop|outlet|branch|location|store|centre|center|office|clinic|dukaan|dukan|दुकान)/iu.test(t)) out.num_sites = 1;
+  const noGst = /(\bno\b|without|don'?t have|do not have|not registered|\bnahi\b|\bnai\b|\bnahin\b|बिना)\s*(?:a\s+|any\s+)?(gst|जीएसटी)|(gst|जीएसटी)\s*(?:number\s*|नंबर\s*|no\.?\s*|registration\s*)?(nahi|nai|nahin|nhi|nahi hai|nahi h|नहीं|नही|नाही|இல்லை|లేదు|ಇಲ್ಲ|નથી|নেই|ਨਹੀਂ|ഇല്ല|\bno\b|:\s*no)/iu;
+  const yesGst = /(have|got|with|registered|\byes\b|हाँ|हां)\s*(?:a\s+|the\s+)?(gst|जीएसटी)|(gst|जीएसटी)\s*(?:number\s*|नंबर\s*|no\.?\s*)?(registered|\byes\b|\bhai\b|\bh\b|है|आहे|உள்ளது|இருக்கு|ఉంది|ಇದೆ|છે|আছে|ਹੈ|ഉണ്ട്|:\s*yes)|gst[- ]registered/iu;
+  if (noGst.test(t)) out.has_gstin = false;
+  else if (yesGst.test(t)) out.has_gstin = true;
+  const budget = t.match(/budget\D{0,20}?(\d[\d,]{2,})/i)
+    ?? t.match(/(?:under|within|below|upto|up to|max(?:imum)?|tak)\s*(?:₹|rs\.?|inr|rupees)?\s*(\d[\d,]{2,})/i)
+    ?? t.match(/(?:₹|rs\.?\s*)\s*(\d[\d,]{2,})\s*(?:a|per|\/|mahina|mahine|महीना|महीने)\s*(?:month|mahina|mahine|महीना|महीने)?/i);
+  if (budget) { const n = Number(budget[1].replace(/,/g, "")); if (n >= 100 && n <= 10_000_000) out.budget_per_month = n; }
+  return out;
+}

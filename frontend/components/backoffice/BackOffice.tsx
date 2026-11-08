@@ -6,7 +6,8 @@ import Link from "next/link";
 import { BrandMark } from "@/components/Header";
 import Icon, { type IconName } from "@/components/ui/Icon";
 import { ApiError, BackendDownError, api } from "@/lib/api";
-import type { BoOwner, BoStatus, BoSummary, LeadScore, ModelReport, QueueItem, Reengage } from "@/lib/types";
+import type { BoOwner, BoStatus, BoSummary, LeadScore, ModelReport, QueueItem, Reengage, SystemStatus } from "@/lib/types";
+import Sheet from "@/components/ui/Sheet";
 
 const PIN_KEY = "udyam_bo_pin";
 const SEG: Record<string, string> = { micro: "Micro retail", prof: "Professional office", multi: "Multi-site", mfg: "Manufacturer" };
@@ -65,9 +66,13 @@ function Dashboard({ pin, onLock }: { pin: string; onLock: () => void }) {
   const [summary, setSummary] = useState<BoSummary | null>(null);
   const [queue, setQueue] = useState<QueueItem[] | null>(null);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
+    api.status().then(setStatus).catch(() => setStatus(null));
     try { const [s, q] = await Promise.all([bo.summary(), bo.queue()]); setSummary(s); setQueue(q); }
     catch (e) { if (e instanceof ApiError && e.status === 401) onLock(); else setError(e instanceof BackendDownError ? "Can't reach the server." : "Couldn't load the back office."); }
   }, [bo, onLock]);
@@ -85,6 +90,11 @@ function Dashboard({ pin, onLock }: { pin: string; onLock: () => void }) {
           <p className="font-bold">Back office</p>
           <span className="hidden rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold text-white/80 sm:inline">Sales & partners</span>
           <div className="ml-auto flex items-center gap-2">
+            {status?.demoControls && (
+              <button onClick={() => setResetOpen(true)} className="hidden h-9 items-center gap-1.5 rounded-full px-3 text-sm font-semibold ring-1 ring-white/20 hover:bg-white/10 sm:flex">
+                <Icon name="bolt" size={15} /> Reset demo
+              </button>
+            )}
             <button onClick={load} className="grid h-9 w-9 place-items-center rounded-full ring-1 ring-white/20 hover:bg-white/10" aria-label="Refresh"><Icon name="refresh" size={16} /></button>
             <button onClick={onLock} className="flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-semibold ring-1 ring-white/20 hover:bg-white/10"><Icon name="lock" size={15} /> Lock</button>
           </div>
@@ -93,6 +103,7 @@ function Dashboard({ pin, onLock }: { pin: string; onLock: () => void }) {
 
       <main className="mx-auto max-w-7xl px-4 pb-16 pt-6 sm:px-6">
         {error && <p role="alert" className="mb-4 rounded-2xl bg-brand-soft p-3 text-sm text-brand-dark">{error}</p>}
+        <StatusStrip status={status} />
         {summary && <Funnel s={summary} />}
 
         <nav className="no-scrollbar mt-6 flex gap-2 overflow-x-auto" aria-label="Sections">
@@ -110,6 +121,19 @@ function Dashboard({ pin, onLock }: { pin: string; onLock: () => void }) {
           {tab === "model" && <ModelView bo={bo} />}
         </div>
       </main>
+      {resetOpen && (
+        <Sheet icon="bolt" title="Reset demo data?" onClose={() => !resetting && setResetOpen(false)}>
+          <p className="text-sm text-ink-2">This removes every test order, call request, chat summary and note, so the next demo starts clean. The 5,000 historic leads, the lead score and the audit log stay. It can&apos;t be undone.</p>
+          <div className="mt-5 flex gap-3">
+            <button onClick={() => setResetOpen(false)} disabled={resetting} className="min-h-12 flex-1 rounded-2xl font-semibold text-ink-2 ring-1 ring-line hover:bg-surface-2">Cancel</button>
+            <button disabled={resetting} onClick={async () => {
+              setResetting(true);
+              try { await bo.demoReset(); setResetOpen(false); await load(); } catch { setError("Couldn't reset the demo data."); setResetOpen(false); }
+              setResetting(false);
+            }} className="min-h-12 flex-[2] rounded-2xl bg-brand font-bold text-white hover:bg-brand-dark disabled:opacity-60">{resetting ? "Resetting…" : "Reset demo data"}</button>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -378,5 +402,26 @@ function ModelView({ bo }: { bo: ReturnType<typeof api.bo> }) {
         <p className="mt-4 text-xs text-muted">Model: logistic regression trained in the backend at start-up (no outside service). Live leads often miss some details; missing details count as average.</p>
       </div>
     </section>
+  );
+}
+
+// ---------- system status: is the AI live, is the document reader loaded? ----------
+function StatusStrip({ status }: { status: SystemStatus | null }) {
+  if (!status) return null;
+  const ai = status.ai.state === "live"
+    ? { tone: "bg-ok", text: status.ai.usingBackupKey ? "AI advisor live (backup key)" : "AI advisor live" }
+    : status.ai.state === "degraded"
+      ? { tone: "bg-amber-400", text: "AI busy: chats use simple mode until it recovers" }
+      : { tone: "bg-amber-400", text: "AI not configured: simple mode" };
+  const ocr = status.ocr.ready ? { tone: "bg-ok", text: "Document reader ready" } : { tone: "bg-amber-400", text: "Document reader warming up" };
+  const items = [ai, ocr, { tone: status.ai.backupKey ? "bg-ok" : "bg-line", text: status.ai.backupKey ? "Backup AI key set" : "No backup AI key" }];
+  return (
+    <div className="mb-4 flex flex-wrap gap-2" aria-label="System status">
+      {items.map((i) => (
+        <span key={i.text} className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-semibold text-ink-2 ring-1 ring-line">
+          <span className={`h-2 w-2 rounded-full ${i.tone}`} aria-hidden /> {i.text}
+        </span>
+      ))}
+    </div>
   );
 }

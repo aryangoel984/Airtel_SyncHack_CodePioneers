@@ -4,7 +4,7 @@ import { buildStarter } from "../starter";
 import { listPrice } from "../quote";
 import { Session, setOutcome } from "./session";
 import {
-  CURRENT_INTERNET, WISH_KEYS, WISH_PRODUCTS, lookupCity, mapBusinessType, resolveProductQuery, validateSlots, SlotFields,
+  CURRENT_INTERNET, WISH_KEYS, WISH_PRODUCTS, lookupCity, mapBusinessType, resolveProductQuery, resolveSegment, validateSlots, SlotFields,
 } from "./mapping";
 import { GstinResult } from "./redact";
 import {
@@ -158,7 +158,7 @@ export function requestHuman(s: Session, reason: string) {
   if (s.handoff) return s.handoff;
   const p = s.profile;
   const lead = createCallback(s.id, reason, {
-    segment: p.segment_hint ?? p.segment_from_type ?? null, city_tier: p.city_tier ?? null,
+    segment: p.segment_from_type ?? p.segment_hint ?? null, city_tier: p.city_tier ?? null,
     employee_count: p.employee_count ?? null, num_sites: p.num_sites ?? null, has_gst: p.has_gstin ?? null,
     wishes: p.wishes, language: p.language, outcome: s.outcome,
   });
@@ -172,7 +172,7 @@ export function publicProfile(s: Session) {
   const p = s.profile;
   return {
     business_type: p.business_type ?? null,
-    segment: p.segment_hint ?? p.segment_from_type ?? null,
+    segment: resolveSegment(p.segment_from_type ?? p.segment_hint ?? null, p.num_sites),
     employee_count: p.employee_count ?? null,
     num_sites: p.num_sites ?? null,
     city: p.city ?? null,
@@ -250,7 +250,8 @@ export function runTool(s: Session, name: string, rawArgs: string): ToolOutcome 
       if (missing.length) return { result: { error: "missing_required_details", missing_required: missing } };
       s.recommendationCount += 1;
       const rec = buildRecommendation(s.profile, {
-        wishes: s.profile.wishes, only_these: a.only_these === true || a.only_these === "true",
+        // a minimal plan only when the customer actually said "only/just/sirf" (models sometimes guess it wrongly)
+        wishes: s.profile.wishes, only_these: (a.only_these === true || a.only_these === "true") && !!s.onlyIntent,
         budget: s.profile.budget_per_month,
       }, s.recommendationCount);
       s.recommendation = rec;

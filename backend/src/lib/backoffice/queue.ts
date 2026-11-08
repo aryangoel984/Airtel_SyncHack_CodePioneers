@@ -40,7 +40,7 @@ export interface QueueItem {
 // ---------------- saved work (owner / status / notes) + audit log ----------------
 interface Store {
   updates: Record<string, { owner?: Owner; status: WorkStatus; note: string; updatedAt: string }>;
-  audit: { at: string; id: string; action: "reveal_number" | "update"; detail?: string }[];
+  audit: { at: string; id: string; action: "reveal_number" | "update" | "demo_reset"; detail?: string }[];
 }
 const storeFile = () => process.env.BACKOFFICE_FILE ?? path.join(process.cwd(), "data", "backoffice.json");
 function readStore(): Store {
@@ -50,6 +50,12 @@ function writeStore(s: Store) {
   const tmp = storeFile() + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
   fs.renameSync(tmp, storeFile());
+}
+
+/** Demo reset: clear owners/status/notes; the audit log keeps a record that a reset happened. */
+export function resetBackoffice() {
+  const store = readStore();
+  writeStore({ updates: {}, audit: [...store.audit, { at: simNow(), id: "-", action: "demo_reset" }] });
 }
 
 // ---------------- helpers ----------------

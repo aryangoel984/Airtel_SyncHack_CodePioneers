@@ -1,6 +1,6 @@
 // One small typed client for every backend call. Base URL comes from NEXT_PUBLIC_API_URL.
 import type {
-  BoSummary, ModelReport, QueueItem, Reengage,
+  BoSummary, ModelReport, QueueItem, Reengage, SystemStatus,
   BundleItem, BusinessProfile, ChatLang, ChatResponse, DocType, EligibleProduct, GstinLookup, KycSample, KycState, Lang, Order, Quote, StarterResponse,
 } from "./types";
 
@@ -49,6 +49,9 @@ export const api = {
   advanceOrder: (id: string) => request<Order>(`/api/orders/${encodeURIComponent(id)}/advance`, { method: "POST" }),
   trackOrder: (orderId: string, mobile: string) => request<{ id: string }>("/api/orders/track", post({ orderId, mobile })),
 
+  // ---- System status (is the AI live, is the OCR engine loaded?) ----
+  status: () => request<SystemStatus>("/api/status"),
+
   // ---- Back office (staff PIN sent in a header) ----
   bo: (pin: string) => {
     const h = { headers: { "x-backoffice-pin": pin } };
@@ -60,6 +63,7 @@ export const api = {
       reveal: (id: string) => request<{ mobile: string }>(`/api/backoffice/queue/${encodeURIComponent(id)}/reveal`, { method: "POST", headers: { "x-backoffice-pin": pin } }),
       reengage: () => request<Reengage>("/api/backoffice/reengage", h),
       model: () => request<ModelReport>("/api/backoffice/model", h),
+      demoReset: () => request<{ ok: boolean }>("/api/backoffice/demo-reset", { method: "POST", headers: { "x-backoffice-pin": pin } }),
     };
   },
 

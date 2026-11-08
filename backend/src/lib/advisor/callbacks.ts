@@ -30,6 +30,9 @@ function writeAll(all: CallbackLead[]) {
   fs.renameSync(tmp, file());
 }
 
+/** Demo reset: remove every call request. */
+export function resetCallbacks() { writeAll([]); }
+
 export function createCallback(sessionId: string, reason: string, summary: Record<string, unknown>): CallbackLead {
   const d = new Date(TODAY);
   const now = new Date();

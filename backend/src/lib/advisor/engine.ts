@@ -6,8 +6,8 @@ import { Session, getSession, newSession, saveSummary, setOutcome } from "./sess
 import { redactMessage } from "./redact";
 import { LlmMessage, LlmUnavailableError, completeWithFallback } from "./llm";
 import { TOOL_DEFS, applyFields, applyGstinLookup, publicProfile, requestHuman, runTool } from "./tools";
-import { extractWishes, lookupCity } from "./mapping";
-import { BlockedWish, Recommendation, buildRecommendation, missingSlots, summarizeForLlm } from "./recommend";
+import { SlotFields, extractBusinessType, extractFacts, extractWishes, lookupCity } from "./mapping";
+import { BlockedWish, Recommendation, buildRecommendation, missingSlots, needsHuman, summarizeForLlm } from "./recommend";
 import { buildSystemPrompt } from "./systemPrompt";
 import { checkReply, collectAmounts, needsNameChecks } from "./guardrail";
 import { guidedTurn } from "./guided";
@@ -67,6 +67,7 @@ export async function handleChat(input: { sessionId?: string; message: string; l
   const askedStep = nextStep(s); // the question this message answers (before anything is saved automatically)
   const message = input.message.slice(0, ADVISOR_CONFIG.maxMessageChars);
   const red = redactMessage(message);
+  if (ONLY_WORDS.test(message)) s.onlyIntent = true;
   if (red.gstin) applyGstinLookup(s, red.gstin);
 
   // ---- things code handles by itself (do not depend on the LLM) ----
@@ -160,6 +161,9 @@ export function ensureBlockedExplained(reply: string, blocked: BlockedWish[], la
   return `${reply.trim()}\n\n${lines.join("\n")}`.trim();
 }
 
+/** "only CCTV", "just a SIM", "sirf", "सिर्फ़", "केवल", "फक्त": the customer wants a minimal plan. */
+const ONLY_WORDS = /(\bonly\b|\bjust\b|\bsirf\b|\bsrf\b|\bbas\b|सिर्फ|केवल|बस|फक्त|மட்டும்|మాత్రమే|ಮಾತ್ರ|ફક્ત|শুধু|ਸਿਰਫ|മാത്രം)/iu;
+
 const NEGATION_WORDS =/(\bnot\b|n't|\bno\b|\bwithout\b|\bnahi\b|\bnahin\b|\bmat\b|नहीं|नही|बिना)/i;
 
 /**
@@ -168,15 +172,24 @@ const NEGATION_WORDS =/(\bnot\b|n't|\bno\b|\bwithout\b|\bnahi\b|\bnahin\b|\bmat\
  * The model can still correct or remove them with update_profile.
  */
 function safetyNetSave(s: Session, text: string) {
-  const fields: { city?: string; wishes?: ReturnType<typeof extractWishes> } = {};
+  const fields: SlotFields = {};
   const city = lookupCity(text);
   if (city && !s.profile.city) fields.city = city.city;
+  if (!s.profile.business_type) { const bt = extractBusinessType(text); if (bt) fields.business_type = bt; }
+  // "2 staff", "one shop", "no GST", "budget 1000": the customer's latest words win
+  const facts = extractFacts(text);
+  if (facts.employee_count !== undefined && facts.employee_count !== s.profile.employee_count) fields.employee_count = facts.employee_count;
+  if (facts.num_sites !== undefined && facts.num_sites !== s.profile.num_sites) fields.num_sites = facts.num_sites;
+  if (facts.has_gstin !== undefined && facts.has_gstin !== s.profile.has_gstin && !s.profile.gstin) fields.has_gstin = facts.has_gstin;
+  if (facts.budget_per_month !== undefined && facts.budget_per_month !== s.profile.budget_per_month) fields.budget_per_month = facts.budget_per_month;
   if (!NEGATION_WORDS.test(text)) {
     const wishes = extractWishes(text).filter((w) => w !== "internet");
     const merged = [...new Set([...s.profile.wishes, ...wishes])];
     if (wishes.length && merged.length !== s.profile.wishes.length) fields.wishes = merged;
   }
   if (Object.keys(fields).length) applyFields(s, fields);
+  const human = needsHuman(s.profile);
+  if (human && !s.handoff) requestHuman(s, human);
 }
 
 // ---------------- the AI turn ----------------

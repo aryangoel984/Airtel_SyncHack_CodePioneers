@@ -49,7 +49,7 @@ export type RequiredSlot = "business_type" | "employee_count" | "num_sites" | "c
 
 export function missingSlots(p: AdvisorProfile): RequiredSlot[] {
   const m: RequiredSlot[] = [];
-  const seg = resolveSegment(p.segment_hint ?? p.segment_from_type ?? null, p.num_sites);
+  const seg = resolveSegment(p.segment_from_type ?? p.segment_hint ?? null, p.num_sites);
   if (!seg) m.push("business_type");
   if (p.employee_count === undefined) m.push("employee_count");
   if (p.num_sites === undefined) m.push("num_sites");
@@ -68,7 +68,7 @@ export function hasValidActiveGstin(p: AdvisorProfile): boolean {
 
 export function toBusinessProfile(p: AdvisorProfile): BusinessProfile | null {
   if (missingSlots(p).length) return null;
-  const segment = resolveSegment(p.segment_hint ?? p.segment_from_type ?? null, p.num_sites)!;
+  const segment = resolveSegment(p.segment_from_type ?? p.segment_hint ?? null, p.num_sites)!;
   return {
     segment,
     city_tier: p.city_tier!,
@@ -135,7 +135,10 @@ export function buildRecommendation(
     items = [{ product_id: "P07", quantity: Math.min(6, Math.max(1, bp.employee_count)) }];
   } else {
     if (!onlyThese) items = starter.base.map((i) => ({ product_id: i.product_id, quantity: i.quantity }));
+    const hasInternet = () => items.some((i) => INTERNET_IDS.includes(i.product_id));
     for (const w of realWishes) {
+      // "internet" is already covered when the plan has a connection: never sell two connections for one wish
+      if (w === "internet" && hasInternet()) continue;
       const pids = w === "internet" ? (cheapestInternet() ? [cheapestInternet()!] : []) : WISH_PRODUCTS[w];
       for (const pid of pids) {
         const blockedInfo = blockedById.get(pid);
@@ -154,7 +157,14 @@ export function buildRecommendation(
           });
         } else {
           wishProductIds.add(pid);
-          if (!items.some((i) => i.product_id === pid)) items.push({ product_id: pid, quantity: eligibleById.get(pid)!.quantity });
+          // A faster / dedicated connection REPLACES the plan's connection (an upgrade), it is not a second line
+          if (INTERNET_IDS.includes(pid)) items = items.filter((i) => !INTERNET_IDS.includes(i.product_id) || i.product_id === pid);
+          // Asked-for per-person products (e.g. "email for everyone") cover every person, not the historic average
+          const perPerson = getProduct(pid)!.unit === "per user";
+          const qty = perPerson ? Math.min(Math.max(1, bp.employee_count), 50) : eligibleById.get(pid)!.quantity;
+          const existing = items.find((i) => i.product_id === pid);
+          if (!existing) items.push({ product_id: pid, quantity: qty });
+          else if (perPerson && existing.quantity < qty) existing.quantity = qty;
         }
       }
     }
@@ -164,6 +174,11 @@ export function buildRecommendation(
       onlyThese = false;
       items = starter.base.map((i) => ({ product_id: i.product_id, quantity: i.quantity }));
     }
+  }
+
+  // Cameras for several outlets: the same number at every outlet
+  if (bp.num_sites > 1) for (const it of items) {
+    if (getProduct(it.product_id)!.unit === "per camera") it.quantity = bp.num_sites * Math.max(1, Math.round(it.quantity / bp.num_sites));
   }
 
   // ---- 2. price it (the rules engine adds missing dependencies, e.g. internet for CCTV) ----

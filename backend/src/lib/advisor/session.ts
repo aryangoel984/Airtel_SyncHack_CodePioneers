@@ -47,6 +47,8 @@ export interface Session {
   modelsUsed: Record<string, number>;
   guardrailHits: number;
   tokensUsed: number;
+  /** The customer used words like "only", "just", "sirf": a minimal plan (only_these) is allowed. */
+  onlyIntent?: boolean;
 }
 
 const sessions = new Map<string, Session>();
@@ -141,3 +143,9 @@ if (process.env.VITEST === undefined) {
 
 /** For tests */
 export function _clearSessions() { sessions.clear(); }
+
+/** Demo reset: forget open chats and the saved (masked) chat summaries. */
+export function resetSessions() {
+  sessions.clear();
+  try { fs.writeFileSync(summariesFile(), "[]"); } catch { /* nothing saved yet */ }
+}

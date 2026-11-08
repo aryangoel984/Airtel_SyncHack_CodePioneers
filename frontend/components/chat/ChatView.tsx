@@ -15,9 +15,12 @@ import type { AdvisorProfileView, ChatLang, ChatResponse, QuickReply, Recommenda
 import Icon from "@/components/ui/Icon";
 import RecommendationCard from "./RecommendationCard";
 import MicButton from "./MicButton";
+import { speak, speechSupported, stopSpeaking } from "@/lib/speech";
 import PersonDialog from "./PersonDialog";
 import Landing from "./Landing";
 import BusinessPanel, { ProgressStrip } from "./BusinessPanel";
+
+const VOICE_KEY = "udyam_voice_replies";
 
 export default function ChatView() {
   const { t, setLang } = useLang();
@@ -36,6 +39,10 @@ export default function ChatView() {
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
   const [personOpen, setPersonOpen] = useState(false);
+  const [canSpeak, setCanSpeak] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [speakingId, setSpeakingId] = useState<number | null>(null);
+  const voiceOnRef = useRef(false);
 
   const lastRecId = useRef(0);
   const nextId = useRef(1);
@@ -57,6 +64,36 @@ export default function ChatView() {
     setReady(true);
   }, []);
 
+  // Voice replies: only where the browser can speak; the choice is remembered on this device.
+  useEffect(() => {
+    if (!speechSupported()) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- browser-only feature check + saved preference */
+    setCanSpeak(true);
+    let on = false;
+    try { on = localStorage.getItem(VOICE_KEY) === "1"; } catch { /* storage blocked */ }
+    setVoiceOn(on); voiceOnRef.current = on;
+    /* eslint-enable react-hooks/set-state-in-effect */
+    window.speechSynthesis.getVoices(); // starts loading the voice list
+    return () => stopSpeaking();
+  }, []);
+
+  const speakMessage = useCallback((id: number, text: string, lang: ChatLang | null) => {
+    const code = CHAT_LANGUAGES.find((l) => l.code === lang)?.speech ?? "en-IN";
+    setSpeakingId(id);
+    speak(text, code, () => setSpeakingId((cur) => (cur === id ? null : cur)));
+  }, []);
+
+  function toggleVoice() {
+    const on = !voiceOn;
+    setVoiceOn(on); voiceOnRef.current = on;
+    try { localStorage.setItem(VOICE_KEY, on ? "1" : "0"); } catch { /* storage blocked */ }
+    if (!on) { stopSpeaking(); setSpeakingId(null); }
+    else {
+      const last = [...messages].reverse().find((m) => m.role === "bot");
+      if (last) speakMessage(last.id, last.text, chatLang); // speak now: this tap also unlocks audio on phones
+    }
+  }
+
   // Save after every change, and keep the newest message in view.
   useEffect(() => {
     if (!ready || !chatLang || !sessionId) return;
@@ -73,12 +110,14 @@ export default function ChatView() {
     return t("adv_sorry");
   }, [t]);
 
-  function apply(r: ChatResponse) {
+  function apply(r: ChatResponse, lang: ChatLang | null = chatLang) {
     setSessionId(r.sessionId);
     saveAdvisorSessionId(r.sessionId);
     const showCard = r.recommendation && r.recommendation.id !== lastRecId.current;
     if (showCard) lastRecId.current = r.recommendation!.id;
-    setMessages((m) => [...m, { id: nextId.current++, role: "bot", text: r.reply, rec: showCard ? r.recommendation! : undefined }]);
+    const id = nextId.current++;
+    setMessages((m) => [...m, { id, role: "bot", text: r.reply, rec: showCard ? r.recommendation! : undefined }]);
+    if (voiceOnRef.current) speakMessage(id, r.reply, lang);
     setChips(r.quickReplies);
     setMode(r.mode);
     setHandoff(!!r.handoff);
@@ -92,7 +131,7 @@ export default function ChatView() {
     setLang(code === "hi" ? "hi" : "en"); // the screen text is English or Hindi
     try {
       lastRecId.current = 0;
-      apply(await api.advisorStart(code));
+      apply(await api.advisorStart(code), code);
     } catch (e) {
       setError(friendlyError(e)); setChatLang(null);
     }
@@ -103,6 +142,7 @@ export default function ChatView() {
     const msg = text.trim();
     if (!msg || busy || !chatLang) return;
     setError(""); setInput(""); setChips([]);
+    stopSpeaking(); setSpeakingId(null);
     setMessages((m) => [...m, { id: nextId.current++, role: "user", text: msg }]);
     setBusy(true);
     try {
@@ -122,6 +162,7 @@ export default function ChatView() {
   }
 
   function restart() {
+    stopSpeaking(); setSpeakingId(null);
     clearChat();
     setChatLang(null); setSessionId(undefined); setMessages([]); setChips([]); setMode("ai");
     setHandoff(false); setError(""); setProfile(null); setMissing(undefined); lastRecId.current = 0;
@@ -161,6 +202,13 @@ export default function ChatView() {
                 {mode === "guided" ? t("adv_status_simple") : t("adv_status_online")} · {langLabel}
               </p>
             </div>
+            {canSpeak && (
+              <button onClick={toggleVoice} aria-pressed={voiceOn} title={voiceOn ? t("adv_voice_on") : t("adv_voice_off")}
+                aria-label={voiceOn ? t("adv_voice_on") : t("adv_voice_off")}
+                className={`grid h-10 w-10 place-items-center rounded-full ring-1 transition-colors ${voiceOn ? "bg-brand text-white ring-brand" : "text-ink-2 ring-line hover:bg-surface-2"}`}>
+                <Icon name={voiceOn ? "speaker" : "speakerOff"} size={18} />
+              </button>
+            )}
             <button onClick={() => setPersonOpen(true)} disabled={!sessionId}
               className="flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-ink-2 ring-1 ring-line hover:bg-surface-2 lg:hidden"
               aria-label={t("adv_person")}>
@@ -193,6 +241,13 @@ export default function ChatView() {
                   <p className="whitespace-pre-wrap rounded-3xl rounded-tl-md bg-white px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-sm ring-1 ring-line">
                     {m.text}
                   </p>
+                  {canSpeak && (
+                    <button type="button" onClick={() => (speakingId === m.id ? (stopSpeaking(), setSpeakingId(null)) : speakMessage(m.id, m.text, chatLang))}
+                      className={`ml-2 mt-1 inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-semibold transition-colors ${speakingId === m.id ? "bg-brand-soft text-brand-dark" : "text-muted hover:bg-white hover:text-ink"}`}>
+                      <Icon name={speakingId === m.id ? "stop" : "speaker"} size={14} />
+                      {speakingId === m.id ? t("adv_speak_stop") : t("adv_speak")}
+                    </button>
+                  )}
                   {m.rec && <RecommendationCard rec={m.rec} onBuy={() => buy(m.rec!)} />}
                 </div>
               </div>

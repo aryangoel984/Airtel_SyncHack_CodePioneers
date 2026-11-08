@@ -5,6 +5,8 @@ export const ADVISOR_CONFIG = {
   primaryModel: () => process.env.GROQ_MODEL || "openai/gpt-oss-120b",
   fallbackModel: () => process.env.GROQ_FALLBACK_MODEL || "openai/gpt-oss-20b",
   apiKey: () => process.env.GROQ_API_KEY || "",
+  /** Optional second key (another Groq account). Used only when the first key is rate-limited or out of daily quota. */
+  backupApiKey: () => process.env.GROQ_API_KEY_BACKUP || "",
 
   temperature: 0.3,
   maxCompletionTokens: 700, // reasoning tokens count too. Groq also counts this toward the per-minute token limit

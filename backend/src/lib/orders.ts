@@ -55,6 +55,9 @@ function writeAll(orders: Order[]) {
   fs.renameSync(tmp, ordersFile()); // atomic swap, so a crash can't leave half a file
 }
 
+/** Demo reset: remove every order (back-office "Reset demo data"). */
+export function resetOrders() { writeAll([]); }
+
 /** Simulated "now": the prototype's TODAY date with the real clock time. */
 export function simNow(): string {
   const real = new Date();

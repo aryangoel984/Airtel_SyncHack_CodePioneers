@@ -44,6 +44,7 @@ export function ocrImage(buf: Buffer): Promise<OcrOutput> {
     }
     const w = await getWorker();
     const r = await w.recognize(png, { rotateAuto: true });
+    ready = true;
     return {
       text: r.data.text ?? "",
       confidence: Math.round(r.data.confidence ?? 0),
@@ -53,6 +54,24 @@ export function ocrImage(buf: Buffer): Promise<OcrOutput> {
   });
   queue = job.catch(() => undefined);
   return job;
+}
+
+let ready = false;
+export const ocrReady = () => ready;
+
+/**
+ * Load the OCR engine at server start (in the background), so the first customer's documents are read in
+ * seconds instead of waiting for the engine to load on a cold server.
+ */
+export async function warmOcr(): Promise<void> {
+  try {
+    const blank = await sharp({ create: { width: 200, height: 60, channels: 3, background: "#ffffff" } }).png().toBuffer();
+    await ocrImage(blank);
+    ready = true;
+    console.log("[kyc] OCR engine ready");
+  } catch (e) {
+    console.warn(`[kyc] OCR warm-up failed (${(e as Error).message}); it will load on the first document`);
+  }
 }
 
 /** For tests / shutdown. */

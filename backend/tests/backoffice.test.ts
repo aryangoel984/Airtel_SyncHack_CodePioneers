@@ -107,3 +107,23 @@ describe("back-office API", () => {
     expect(s.model.auc).toBeGreaterThan(0.65);
   });
 });
+
+describe("demo-day controls", () => {
+  it("status endpoint says whether the AI and OCR are ready, without secrets", async () => {
+    const s = (await request(app).get("/api/status")).body;
+    expect(s.ok).toBe(true);
+    expect(s.ai).toHaveProperty("state");
+    expect(s.ocr).toHaveProperty("ready");
+    expect(JSON.stringify(s)).not.toMatch(/gsk_|apiKey/i);
+  });
+
+  it("demo reset needs the PIN, then clears orders and call requests", async () => {
+    expect((await request(app).post("/api/backoffice/demo-reset")).status).toBe(401);
+    const r = await request(app).post("/api/backoffice/demo-reset").set("x-backoffice-pin", PIN);
+    expect(r.body).toEqual({ ok: true });
+    const q = (await request(app).get("/api/backoffice/queue").set("x-backoffice-pin", PIN)).body;
+    expect(q).toHaveLength(0);
+    const audit = (await request(app).get("/api/backoffice/audit").set("x-backoffice-pin", PIN)).body;
+    expect(audit.some((a: { action: string }) => a.action === "demo_reset")).toBe(true);
+  });
+});

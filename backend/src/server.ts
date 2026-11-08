@@ -15,6 +15,8 @@ import { kycRouter } from "./routes/kyc";
 import { backofficeRouter, DEFAULT_PIN } from "./routes/backoffice";
 import { trainModel } from "./lib/backoffice/model";
 import { initModels } from "./lib/advisor/llm";
+import { systemRouter } from "./routes/system";
+import { warmOcr } from "./lib/kyc/ocr";
 
 // Load CSVs and compute the starter-bundle statistics once, at startup.
 warmStarterCache();
@@ -27,6 +29,7 @@ app.use(cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:3000" }));
 app.use(express.json({ limit: "20kb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.use("/api/status", systemRouter);
 app.use("/api/gstin", gstinRouter);
 app.use("/api/udyam", udyamRouter);
 app.use("/api/catalogue", catalogueRouter);
@@ -50,5 +53,6 @@ if (process.env.VITEST === undefined) {
   const port = Number(process.env.PORT ?? 4000);
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
   initModels(); // confirm the Groq models exist (logs model names only)
+  setTimeout(() => { warmOcr(); }, 1500); // load the OCR engine in the background so the first KYC check is fast
   if (!process.env.BACKOFFICE_PIN) console.warn(`[backoffice] using the demo staff PIN ${DEFAULT_PIN}. Set BACKOFFICE_PIN in backend/.env before going live.`);
 }

@@ -69,10 +69,19 @@ export class GroqClient implements LlmClient {
 
 // ---------- shared state ----------
 let client: LlmClient | null = null;
+let backup: LlmClient | null | undefined; // undefined = not looked up yet
+let injected = false;
 let models = { primary: "", fallback: "" };
+/** When the main key is out of quota, skip it until this time (ms) instead of failing twice on every message. */
+let mainResting = 0;
 
-/** Tests (and the eval script) can plug in their own client. */
-export function setLlmClient(c: LlmClient | null) { client = c; models = { primary: "", fallback: "" }; }
+/** What the status endpoint shows (no secrets). */
+export const llmStatus = { lastOkAt: null as string | null, lastFailAt: null as string | null, lastKey: null as "main" | "backup" | null };
+
+/** Tests (and the eval script) can plug in their own client(s). */
+export function setLlmClient(c: LlmClient | null, backupClient: LlmClient | null = null) {
+  client = c; backup = c ? backupClient : undefined; injected = !!c; models = { primary: "", fallback: "" }; mainResting = 0;
+}
 
 function getClient(): LlmClient {
   if (client) return client;
@@ -81,6 +90,15 @@ function getClient(): LlmClient {
   client = new GroqClient(key);
   return client;
 }
+
+function getBackup(): LlmClient | null {
+  if (backup !== undefined) return backup;
+  const key = ADVISOR_CONFIG.backupApiKey();
+  backup = !injected && key ? new GroqClient(key) : null;
+  return backup;
+}
+
+export function hasBackupKey(): boolean { return !!getBackup(); }
 
 export function activeModels() {
   return {
@@ -127,19 +145,59 @@ export function retryAfterMs(e: unknown): number | null {
 export async function completeWithFallback(
   messages: LlmMessage[], tools: unknown[], toolChoice: "auto" | "required" = "auto",
 ): Promise<LlmReply & { model: string }> {
+  try {
+    const r = await completeOnKeys(messages, tools, toolChoice);
+    llmStatus.lastOkAt = new Date().toISOString();
+    return r;
+  } catch (e) {
+    llmStatus.lastFailAt = new Date().toISOString();
+    throw e;
+  }
+}
+
+/** Both models on the main key; if both fail and there is a backup key, both models on the backup key. */
+async function completeOnKeys(messages: LlmMessage[], tools: unknown[], toolChoice: "auto" | "required"): Promise<LlmReply & { model: string }> {
+  const main = getClient(); // throws LlmUnavailableError when there is no key
+  const spare = getBackup();
+  if (spare && Date.now() < mainResting) {
+    try { const r = await completeOnClient(spare, messages, tools, toolChoice, "backup"); llmStatus.lastKey = "backup"; return r; }
+    catch { mainResting = 0; } // backup failed too: give the main key another chance below
+  }
+  try {
+    const r = await completeOnClient(main, messages, tools, toolChoice, "main", !spare);
+    llmStatus.lastKey = "main";
+    return r;
+  } catch (e) {
+    if (!spare) throw e;
+    const rest = (e as { restMs?: number }).restMs;
+    if (rest) mainResting = Date.now() + Math.min(rest, 60 * 60 * 1000);
+    console.warn(`[advisor] main key failed; trying the backup key${rest ? ` (main key resting ${Math.round(rest / 1000)}s)` : ""}`);
+    const r = await completeOnClient(spare, messages, tools, toolChoice, "backup");
+    llmStatus.lastKey = "backup";
+    return r;
+  }
+}
+
+async function completeOnClient(
+  c: LlmClient, messages: LlmMessage[], tools: unknown[], toolChoice: "auto" | "required", label: string, patient = true,
+): Promise<LlmReply & { model: string }> {
   const { primary, fallback } = activeModels();
-  const c = getClient(); // throws LlmUnavailableError when there is no key
   let e1: unknown, e2: unknown;
   try {
     return { ...(await c.complete(primary, messages, tools, toolChoice)), model: primary };
   } catch (e) { e1 = e; }
-  console.warn(`[advisor] ${primary} failed (${describeError(e1)}); trying ${fallback}`);
+  console.warn(`[advisor] ${primary} failed on the ${label} key (${describeError(e1)}); trying ${fallback}`);
   try {
     return { ...(await c.complete(fallback, messages, tools, toolChoice)), model: fallback };
   } catch (e) { e2 = e; }
   console.warn(`[advisor] ${fallback} failed (${describeError(e2)})`);
 
   const waits = [retryAfterMs(e1), retryAfterMs(e2)].filter((w): w is number => w !== null);
+  if (waits.length === 2 && !patient) {
+    const err = new LlmUnavailableError(`both models failed on the ${label} key`);
+    (err as LlmUnavailableError & { restMs?: number }).restMs = Math.min(...waits);
+    throw err;
+  }
   if (waits.length === 2) {
     const wait = Math.min(...waits);
     if (wait <= ADVISOR_CONFIG.rateLimitPatienceMs) {
@@ -152,5 +210,5 @@ export async function completeWithFallback(
       }
     }
   }
-  throw new LlmUnavailableError("both models failed");
+  throw new LlmUnavailableError(`both models failed on the ${label} key`);
 }

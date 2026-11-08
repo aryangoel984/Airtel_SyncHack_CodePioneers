@@ -6,10 +6,15 @@
 //   GET   /api/backoffice/reengage           past leads lost to "no visit / unreachable", ranked
 //   GET   /api/backoffice/model              how the lead score was built and how good it is
 //   GET   /api/backoffice/audit              who saw which number, and when
+//   POST  /api/backoffice/demo-reset         clear demo orders, call requests, chats and notes (only when DEMO_CONTROLS is on)
 import crypto from "crypto";
 import { NextFunction, Request, Response, Router } from "express";
 import { rateLimit } from "../lib/rateLimit";
-import { auditLog, buildQueue, funnel, OWNERS, reengageList, revealNumber, STATUSES, updateItem } from "../lib/backoffice/queue";
+import { auditLog, buildQueue, funnel, OWNERS, reengageList, resetBackoffice, revealNumber, STATUSES, updateItem } from "../lib/backoffice/queue";
+import { resetOrders } from "../lib/orders";
+import { resetCallbacks } from "../lib/advisor/callbacks";
+import { resetSessions } from "../lib/advisor/session";
+import { demoControlsEnabled } from "../lib/tracker";
 import { modelReport } from "../lib/backoffice/model";
 
 export const backofficeRouter = Router();
@@ -53,3 +58,10 @@ backofficeRouter.post("/queue/:id/reveal", (req, res) => {
 backofficeRouter.get("/reengage", (_req, res) => res.json(reengageList(50)));
 backofficeRouter.get("/model", (_req, res) => res.json(modelReport()));
 backofficeRouter.get("/audit", (_req, res) => res.json(auditLog(50)));
+
+backofficeRouter.post("/demo-reset", (_req, res) => {
+  if (!demoControlsEnabled()) return res.status(403).json({ error: "Demo controls are switched off" });
+  resetOrders(); resetCallbacks(); resetSessions(); resetBackoffice();
+  console.log("[backoffice] demo data reset");
+  res.json({ ok: true });
+});

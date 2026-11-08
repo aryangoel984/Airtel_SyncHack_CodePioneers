@@ -38,7 +38,7 @@ describe("city -> tier", () => {
     expect(lookupCity("main Patna mein hoon")?.city).toBe("Patna");
   });
   it("returns null for an unknown city", () => {
-    expect(lookupCity("Gorakhpur")).toBeNull();
+    expect(lookupCity("Xyztown")).toBeNull();
   });
   it("reads 'big' or 'small' answers", () => {
     expect(parseTierWords("big metro city")).toBe(1);
