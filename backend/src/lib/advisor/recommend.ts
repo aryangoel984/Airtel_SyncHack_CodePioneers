@@ -119,7 +119,7 @@ export function buildRecommendation(
   const wishes = opts.wishes ?? p.wishes;
   const realWishes = wishes.filter((w) => w !== "sim_only");
   const simOnly = wishes.includes("sim_only") && realWishes.length === 0;
-  const onlyThese = simOnly || !!opts.only_these;
+  let onlyThese = simOnly || !!opts.only_these;
 
   const qty = (pid: string) => defaultQuantity(getProduct(pid)!, bp);
   const cheapestInternet = () =>
@@ -157,6 +157,12 @@ export function buildRecommendation(
           if (!items.some((i) => i.product_id === pid)) items.push({ product_id: pid, quantity: eligibleById.get(pid)!.quantity });
         }
       }
+    }
+    // "Only these" but every wish was blocked (e.g. WhatsApp without GST): never show an empty plan,
+    // fall back to the starter plan so the owner still gets a priced, buyable bundle.
+    if (onlyThese && items.length === 0) {
+      onlyThese = false;
+      items = starter.base.map((i) => ({ product_id: i.product_id, quantity: i.quantity }));
     }
   }
 

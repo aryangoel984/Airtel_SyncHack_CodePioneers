@@ -45,6 +45,14 @@ describe("get_recommendation", () => {
     expect(b.alternative?.in_plan).toBe(true);
   });
 
+  it("'only WhatsApp' without GST: explains the block and still offers the starter plan, never an empty one", () => {
+    const r = buildRecommendation(mk(), { wishes: ["whatsapp"], only_these: true }, 1);
+    expect(r.blocked_wishes.map((b) => b.product_id)).toContain("P15");
+    expect(r.items.length).toBeGreaterThan(0);
+    expect(r.quote.monthly_total_inr).toBeGreaterThan(0);
+    expect(r.minimal).toBe(false);
+  });
+
   it("'only CCTV' gives CCTV plus the internet it needs, with the dependency marked", () => {
     const r = buildRecommendation(mk({ employee_count: 3 }), { wishes: ["cctv"], only_these: true }, 1);
     expect(ids(r)).toContain("P23");
